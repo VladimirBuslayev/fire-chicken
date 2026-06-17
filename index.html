@@ -128,28 +128,62 @@
     const lsDel = k => { try { localStorage.removeItem(k); } catch {} };
 
     // ════════════════════════════════════════════════════════════
-    // HELPERS
+    // HELPERS & MATCHING
     // ════════════════════════════════════════════════════════════
     const toSlug   = s => s.toLowerCase().replace(/[^a-z0-9]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
     const normName = s => (s || "").toLowerCase().trim().replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ");
+    const fmt$     = n => (n != null && !isNaN(n)) ? `$${Number(n).toFixed(2)}` : "—";
+    const todayStr = () => new Date().toISOString().slice(0, 10);
 
-    // Normalise set names so Collectr and pokemontcg.io names match
-    // e.g. "Scarlet & Violet" == "Scarlet and Violet", "Promos" == "Promo"
+    // Normalise set names: handles em-dash series prefixes ("Sword & Shield—Vivid Voltage")
+    // and common formatting differences between Collectr and pokemontcg.io exports.
     const normSet = s => (s || "")
       .toLowerCase()
       .replace(/&/g, "and")
-      .replace(/[^a-z0-9\s]/g, "")
-      .replace(/\bpromos\b/g, "promo")
+      .replace(/[—–]/g, " ")          // em-dash / en-dash → space (handles "Series—Set" format)
+      .replace(/[^a-z0-9\s]/g, "")   // strip remaining punctuation
+      .replace(/\bpromos?\b/g, "promo")
       .replace(/\s+/g, " ")
       .trim();
 
-    // Ownership key: "normName:::normSet"
-    // Matching by name + set prevents false positives when different artists
-    // have drawn the same Pokémon in different sets.
-    const ownedKey = (cardName, setName) => normName(cardName) + ":::" + normSet(setName);
+    // Strip common series prefixes so Collectr's "Sword and Shield Vivid Voltage"
+    // also matches pokemontcg.io's plain "Vivid Voltage".
+    const SERIES_PFX = [
+      "scarlet and violet", "sword and shield", "swsh",
+      "sun and moon", "sm", "xy", "black and white", "bw",
+      "diamond and pearl", "heartgold soulsilver", "platinum", "ex",
+    ];
+    const normSetStripped = s => {
+      const n = normSet(s);
+      for (var i = 0; i < SERIES_PFX.length; i++) {
+        var pfx = SERIES_PFX[i];
+        if (n.indexOf(pfx + " ") === 0) return n.slice(pfx.length + 1);
+      }
+      return n;
+    };
 
-    const fmt$     = n  => (n != null && !isNaN(n)) ? `$${Number(n).toFixed(2)}` : "—";
-    const todayStr = () => new Date().toISOString().slice(0, 10);
+    // Build ALL possible ownership keys for a (name, setName) pair.
+    // We add both the exact-normalised set AND the prefix-stripped variant so
+    // that a CSV row "Sword & Shield—Vivid Voltage" matches the API's "Vivid Voltage".
+    const makeKeys = function(cardName, setName) {
+      var n = normName(cardName);
+      if (!n) return [];
+      var exact    = normSet(setName);
+      var stripped = normSetStripped(setName);
+      var keys = [n + ":::" + exact];
+      if (stripped !== exact) keys.push(n + ":::" + stripped);
+      return keys;
+    };
+
+    // Check if a pokemontcg.io card is owned: any of its keys must be in the owned set.
+    const isCardOwned = function(card, ownedKeySet) {
+      if (!ownedKeySet || !ownedKeySet.size) return false;
+      var keys = makeKeys(card.name || "", card.set && card.set.name || "");
+      for (var i = 0; i < keys.length; i++) {
+        if (ownedKeySet.has(keys[i])) return true;
+      }
+      return false;
+    };
 
     const getBestPrice = card => {
       const p = card && card.tcgplayer && card.tcgplayer.prices ? card.tcgplayer.prices : {};
@@ -161,54 +195,46 @@
       return null;
     };
 
-    // Sort a card array given the current sortBy mode and owned key set
-    const sortCards = function(arr, sortBy, ownedKeys) {
+    // Sort card array by the chosen mode
+    const sortCards = function(arr, sortBy, ownedKeySet) {
       if (!arr || !arr.length) return arr;
       const a2 = arr.slice();
-      const priceOf = function(c) { const p = getBestPrice(c); return p ? p.amount : null; };
-      const isOwned = function(c) { return ownedKeys.has(ownedKey(c.name, c.set && c.set.name || "")); };
-      const byName  = function(a, b) { return (a.name || "").localeCompare(b.name || ""); };
-      const byDate  = function(a, b) {
+      const priceOf  = c => { const p = getBestPrice(c); return p ? p.amount : null; };
+      const owned    = c => isCardOwned(c, ownedKeySet);
+      const byName   = (a, b) => (a.name || "").localeCompare(b.name || "");
+      const byDate   = (a, b) => {
         const da = a.set && a.set.releaseDate || "";
         const db = b.set && b.set.releaseDate || "";
         return da === db ? byName(a, b) : da.localeCompare(db);
       };
-
       switch (sortBy) {
         case "price-desc":
           return a2.sort(function(a, b) {
             const pa = priceOf(a), pb = priceOf(b);
             if (pa === null && pb === null) return byName(a, b);
-            if (pa === null) return 1;
-            if (pb === null) return -1;
+            if (pa === null) return 1; if (pb === null) return -1;
             return pb - pa || byName(a, b);
           });
         case "price-asc":
           return a2.sort(function(a, b) {
             const pa = priceOf(a), pb = priceOf(b);
             if (pa === null && pb === null) return byName(a, b);
-            if (pa === null) return 1;
-            if (pb === null) return -1;
+            if (pa === null) return 1; if (pb === null) return -1;
             return pa - pb || byName(a, b);
           });
         case "missing":
           return a2.sort(function(a, b) {
-            const ao = isOwned(a), bo = isOwned(b);
-            if (ao !== bo) return ao ? 1 : -1;
-            return byName(a, b);
+            const ao = owned(a), bo = owned(b);
+            return ao !== bo ? (ao ? 1 : -1) : byName(a, b);
           });
         case "owned":
           return a2.sort(function(a, b) {
-            const ao = isOwned(a), bo = isOwned(b);
-            if (ao !== bo) return ao ? -1 : 1;
-            return byName(a, b);
+            const ao = owned(a), bo = owned(b);
+            return ao !== bo ? (ao ? -1 : 1) : byName(a, b);
           });
-        case "date-desc":
-          return a2.sort(function(a, b) { return byDate(b, a); });
-        case "date-asc":
-          return a2.sort(byDate);
-        default: // "name" — API already returns name-sorted
-          return a2;
+        case "date-desc": return a2.sort(function(a, b) { return byDate(b, a); });
+        case "date-asc":  return a2.sort(byDate);
+        default:          return a2; // "name" — already sorted by API
       }
     };
 
@@ -225,8 +251,7 @@
         );
         if (!res.ok) throw new Error(`API error ${res.status}`);
         const json = await res.json();
-        const data = json.data || [];
-        const total = json.totalCount || 0;
+        const data = json.data || [], total = json.totalCount || 0;
         all = all.concat(data);
         if (all.length >= total || !data.length) break;
         page++;
@@ -251,9 +276,7 @@
       return (
         <svg width={size || 16} height={size || 16} viewBox="0 0 24 24"
           fill="none" stroke="currentColor" strokeWidth="2"
-          strokeLinecap="round" strokeLinejoin="round">
-          {children}
-        </svg>
+          strokeLinecap="round" strokeLinejoin="round">{children}</svg>
       );
     }
     const IcoSearch = () => <Ico><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></Ico>;
@@ -286,11 +309,9 @@
     // ════════════════════════════════════════════════════════════
     const CardTile = React.memo(function CardTile({ card, owned, onClick }) {
       return (
-        <div
-          className={`card-tile ${owned ? "owned" : "missing"}`}
+        <div className={`card-tile ${owned ? "owned" : "missing"}`}
           onClick={() => onClick(card)}
-          title={`${card.name} — ${owned ? "✓ Owned" : "Missing"}`}
-        >
+          title={`${card.name} — ${owned ? "✓ Owned" : "Missing"}`}>
           {card.images && card.images.small
             ? <img src={card.images.small} alt={card.name} loading="lazy" decoding="async" />
             : <div className="card-blank"><span>{card.name}</span></div>
@@ -316,7 +337,6 @@
     function PriceChart({ cardId }) {
       const all  = lsGet("pb2_price_history") || {};
       const hist = (all[cardId] || []).slice(-90);
-
       if (hist.length < 2) {
         return (
           <div style={{ textAlign:"center", color:"#6b6b90", fontSize:"0.75rem", padding:"1.25rem 0", lineHeight:1.6 }}>
@@ -325,28 +345,18 @@
           </div>
         );
       }
-
-      const prices = hist.map(function(h) { return h.price; });
-      const dates  = hist.map(function(h) { return h.date.slice(5); });
-      const minP   = Math.min.apply(null, prices);
-      const maxP   = Math.max.apply(null, prices);
+      const prices = hist.map(h => h.price);
+      const dates  = hist.map(h => h.date.slice(5));
+      const minP   = Math.min.apply(null, prices), maxP = Math.max.apply(null, prices);
       const range  = maxP - minP || 1;
       const W=340, H=80, PX=8, PY=12, W2=W-2*PX, H2=H-2*PY;
-
       const pts = prices.map(function(p, i) {
-        return [
-          PX + (prices.length > 1 ? (i / (prices.length - 1)) * W2 : W2/2),
-          PY + H2 - ((p - minP) / range) * H2
-        ];
+        return [PX + (prices.length > 1 ? (i / (prices.length - 1)) * W2 : W2/2), PY + H2 - ((p - minP) / range) * H2];
       });
-      const poly  = pts.map(function(pt) { return pt[0]+","+pt[1]; }).join(" ");
-      const last  = pts[pts.length - 1];
-      const first = pts[0];
-      const areaD = ["M "+first[0]+","+(H-PY)]
-        .concat(pts.map(function(pt) { return "L "+pt[0]+","+pt[1]; }))
-        .concat(["L "+last[0]+","+(H-PY),"Z"]).join(" ");
+      const poly  = pts.map(pt => pt[0]+","+pt[1]).join(" ");
+      const last  = pts[pts.length - 1], first = pts[0];
+      const areaD = ["M "+first[0]+","+(H-PY)].concat(pts.map(pt => "L "+pt[0]+","+pt[1])).concat(["L "+last[0]+","+(H-PY),"Z"]).join(" ");
       const gradId = "g"+cardId.replace(/[^a-z0-9]/gi,"");
-
       return (
         <svg viewBox={"0 0 "+W+" "+H} style={{ width:"100%", height:"auto", display:"block" }}>
           <defs>
@@ -374,43 +384,38 @@
     // ════════════════════════════════════════════════════════════
     function CardModal({ card, owned, onClose }) {
       const price       = getBestPrice(card);
-      const allVariants = (card && card.tcgplayer && card.tcgplayer.prices) ? card.tcgplayer.prices : {};
+      const allVariants = card && card.tcgplayer && card.tcgplayer.prices ? card.tcgplayer.prices : {};
 
       useEffect(function() {
         if (!card || !price) return;
-        const all  = lsGet("pb2_price_history") || {};
-        const hist = all[card.id] || [];
-        const td   = todayStr();
-        if (!hist.find(function(h) { return h.date === td; })) {
+        const all = lsGet("pb2_price_history") || {};
+        const hist = all[card.id] || [], td = todayStr();
+        if (!hist.find(h => h.date === td)) {
           all[card.id] = hist.concat([{ date: td, price: price.amount }]).slice(-180);
           lsSet("pb2_price_history", all);
         }
       }, [card && card.id]);
 
       useEffect(function() {
-        const fn = function(e) { if (e.key === "Escape") onClose(); };
+        const fn = e => { if (e.key === "Escape") onClose(); };
         window.addEventListener("keydown", fn);
-        return function() { window.removeEventListener("keydown", fn); };
+        return () => window.removeEventListener("keydown", fn);
       }, [onClose]);
 
       useEffect(function() {
         document.body.style.overflow = "hidden";
-        return function() { document.body.style.overflow = ""; };
+        return () => { document.body.style.overflow = ""; };
       }, []);
 
       if (!card) return null;
-
       return (
         <div className="modal-bg" onClick={onClose} style={{
-          position:"fixed", inset:0, zIndex:200,
-          background:"rgba(7,7,15,0.88)",
-          display:"flex", alignItems:"center", justifyContent:"center",
-          padding:"1rem",
+          position:"fixed", inset:0, zIndex:200, background:"rgba(7,7,15,0.88)",
+          display:"flex", alignItems:"center", justifyContent:"center", padding:"1rem",
         }}>
-          <div className="fade-up" onClick={function(e) { e.stopPropagation(); }} style={{
+          <div className="fade-up" onClick={e => e.stopPropagation()} style={{
             background:"#141425", border:"1px solid #1e1e35", borderRadius:16,
-            maxWidth:460, width:"100%", maxHeight:"90dvh", overflowY:"auto",
-            padding:"1.25rem",
+            maxWidth:460, width:"100%", maxHeight:"90dvh", overflowY:"auto", padding:"1.25rem",
           }}>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:"1rem" }}>
               <div>
@@ -456,9 +461,7 @@
                       {price.prices && price.prices.high != null && <span style={{color:"#6b6b90"}}>High <span style={{color:"#9b9bc0"}}>{fmt$(price.prices.high)}</span></span>}
                     </div>
                   </div>
-                ) : (
-                  <div style={{ fontSize:"0.78rem", color:"#6b6b90" }}>No pricing data</div>
-                )}
+                ) : <div style={{ fontSize:"0.78rem", color:"#6b6b90" }}>No pricing data</div>}
               </div>
             </div>
 
@@ -487,13 +490,10 @@
 
             {card.tcgplayer && card.tcgplayer.url && (
               <a href={card.tcgplayer.url} target="_blank" rel="noopener noreferrer" style={{
-                display:"block", textAlign:"center",
-                background:"#1a1430", color:"#9b7fe8",
+                display:"block", textAlign:"center", background:"#1a1430", color:"#9b7fe8",
                 padding:"0.5rem", borderRadius:8, textDecoration:"none",
                 fontSize:"0.78rem", border:"1px solid #2e2255", fontWeight:500,
-              }}>
-                View on TCGPlayer →
-              </a>
+              }}>View on TCGPlayer →</a>
             )}
           </div>
         </div>
@@ -503,27 +503,24 @@
     // ════════════════════════════════════════════════════════════
     // ARTIST SECTION
     // ════════════════════════════════════════════════════════════
-    function ArtistSection({ entry, cards, ownedKeys, onCardClick, searchQuery, sortBy }) {
+    function ArtistSection({ entry, cards, ownedKeySet, onCardClick, searchQuery, sortBy }) {
       const isSecondary = entry.tier === "secondary";
       const [open, setOpen] = useState(!isSecondary);
 
-      // Filter by search, then sort
       const displayCards = useMemo(function() {
         let arr = cards;
         if (searchQuery) {
           const q = searchQuery.toLowerCase();
-          arr = arr.filter(function(c) { return c.name.toLowerCase().indexOf(q) !== -1; });
+          arr = arr.filter(c => c.name.toLowerCase().indexOf(q) !== -1);
         }
-        return sortCards(arr, sortBy, ownedKeys);
-      }, [cards, searchQuery, sortBy, ownedKeys]);
+        return sortCards(arr, sortBy, ownedKeySet);
+      }, [cards, searchQuery, sortBy, ownedKeySet]);
 
       const ownedCount = useMemo(function() {
-        return cards.filter(function(c) {
-          return ownedKeys.has(ownedKey(c.name, c.set && c.set.name || ""));
-        }).length;
-      }, [cards, ownedKeys]);
+        return cards.filter(c => isCardOwned(c, ownedKeySet)).length;
+      }, [cards, ownedKeySet]);
 
-      const pct      = cards.length ? Math.round((ownedCount / cards.length) * 100) : 0;
+      const pct = cards.length ? Math.round((ownedCount / cards.length) * 100) : 0;
       const complete = pct === 100 && cards.length > 0;
 
       useEffect(function() {
@@ -534,52 +531,35 @@
 
       return (
         <div style={{ marginBottom:"2rem" }}>
-          <div onClick={function() { setOpen(function(o) { return !o; }); }} style={{
+          <div onClick={() => setOpen(o => !o)} style={{
             display:"flex", alignItems:"center", gap:"0.6rem",
             paddingBottom:"0.6rem", marginBottom:"0.75rem",
-            borderBottom:"1px solid #1e1e35",
-            cursor:"pointer", userSelect:"none",
+            borderBottom:"1px solid #1e1e35", cursor:"pointer", userSelect:"none",
           }}>
             <IcoChev open={open}/>
             <div style={{ flex:1, minWidth:0 }}>
               <div style={{ display:"flex", alignItems:"baseline", flexWrap:"wrap", gap:"0.5rem" }}>
-                <span style={{
-                  fontSize: isSecondary ? "0.9rem" : "1.05rem",
-                  fontWeight:700, letterSpacing:"-0.01em",
-                  color: complete ? "#22c55e" : "#e8e8f4",
-                }}>
+                <span style={{ fontSize: isSecondary ? "0.9rem" : "1.05rem", fontWeight:700, letterSpacing:"-0.01em", color: complete ? "#22c55e" : "#e8e8f4" }}>
                   {entry.tier === "special" ? "🎮 " : ""}{entry.name}{complete ? " ✓" : ""}
                 </span>
                 <span style={{ fontSize:"0.73rem", color:"#6b6b90", fontVariantNumeric:"tabular-nums" }}>
                   {ownedCount} / {cards.length}
                 </span>
                 {isSecondary && (
-                  <span style={{ fontSize:"0.6rem", color:"#3a3a5a", background:"#141425", border:"1px solid #1e1e35", padding:"0px 5px", borderRadius:3 }}>
-                    secondary
-                  </span>
+                  <span style={{ fontSize:"0.6rem", color:"#3a3a5a", background:"#141425", border:"1px solid #1e1e35", padding:"0px 5px", borderRadius:3 }}>secondary</span>
                 )}
               </div>
               <div style={{ marginTop:"0.3rem", height:2, background:"#1e1e35", borderRadius:1, maxWidth:180, overflow:"hidden" }}>
-                <div className="prog-fill" style={{
-                  width:`${pct}%`, height:"100%", borderRadius:1,
-                  background: complete ? "#22c55e" : "#8b6cd8",
-                }}/>
+                <div className="prog-fill" style={{ width:`${pct}%`, height:"100%", borderRadius:1, background: complete ? "#22c55e" : "#8b6cd8" }}/>
               </div>
             </div>
           </div>
 
           {open && (
             <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(76px, 1fr))", gap:"6px" }}>
-              {displayCards.map(function(card) {
-                return (
-                  <CardTile
-                    key={card.id}
-                    card={card}
-                    owned={ownedKeys.has(ownedKey(card.name, card.set && card.set.name || ""))}
-                    onClick={onCardClick}
-                  />
-                );
-              })}
+              {displayCards.map(card => (
+                <CardTile key={card.id} card={card} owned={isCardOwned(card, ownedKeySet)} onClick={onCardClick}/>
+              ))}
             </div>
           )}
         </div>
@@ -590,60 +570,40 @@
     // SETTINGS
     // ════════════════════════════════════════════════════════════
     function SettingsPanel({ onClose, onClearCache }) {
-      const [key, setKey] = useState(function() { return lsGet("pb2_api_key") || ""; });
-      const save = function() { lsSet("pb2_api_key", key.trim()); onClose(); };
-
+      const [key, setKey] = useState(() => lsGet("pb2_api_key") || "");
+      const save = () => { lsSet("pb2_api_key", key.trim()); onClose(); };
       useEffect(function() {
-        const fn = function(e) { if (e.key === "Escape") onClose(); };
+        const fn = e => { if (e.key === "Escape") onClose(); };
         window.addEventListener("keydown", fn);
-        return function() { window.removeEventListener("keydown", fn); };
+        return () => window.removeEventListener("keydown", fn);
       }, [onClose]);
-
       return (
         <div onClick={onClose} style={{
-          position:"fixed", inset:0, zIndex:300,
-          background:"rgba(7,7,15,0.8)", backdropFilter:"blur(4px)",
+          position:"fixed", inset:0, zIndex:300, background:"rgba(7,7,15,0.8)", backdropFilter:"blur(4px)",
           display:"flex", alignItems:"center", justifyContent:"center", padding:"1rem",
         }}>
-          <div className="fade-up" onClick={function(e) { e.stopPropagation(); }} style={{
-            background:"#141425", border:"1px solid #1e1e35", borderRadius:16,
-            padding:"1.5rem", maxWidth:380, width:"100%",
+          <div className="fade-up" onClick={e => e.stopPropagation()} style={{
+            background:"#141425", border:"1px solid #1e1e35", borderRadius:16, padding:"1.5rem", maxWidth:380, width:"100%",
           }}>
             <h3 style={{ fontWeight:700, fontSize:"1rem", color:"#e8e8f4", marginBottom:"1.25rem" }}>Settings</h3>
-
             <label style={{ display:"block", fontSize:"0.75rem", color:"#6b6b90", marginBottom:"0.4rem" }}>
               pokemontcg.io API Key <span style={{ color:"#3a3a5a" }}>(optional)</span>
             </label>
-            <input
-              type="password" value={key} onChange={function(e) { setKey(e.target.value); }}
+            <input type="password" value={key} onChange={e => setKey(e.target.value)}
               placeholder="Increases rate limits — leave blank for now"
-              style={{
-                width:"100%", background:"#0f0f1c", border:"1px solid #1e1e35",
-                borderRadius:8, color:"#e8e8f4", padding:"0.5rem 0.75rem",
-                fontSize:"0.85rem", marginBottom:"0.5rem",
-              }}
+              style={{ width:"100%", background:"#0f0f1c", border:"1px solid #1e1e35", borderRadius:8, color:"#e8e8f4", padding:"0.5rem 0.75rem", fontSize:"0.85rem", marginBottom:"0.5rem" }}
             />
             <a href="https://dev.pokemontcg.io/" target="_blank" rel="noopener" style={{ display:"block", fontSize:"0.72rem", color:"#8b6cd8", marginBottom:"1.25rem" }}>
               Get a free API key (30 seconds) →
             </a>
-
             <div style={{ display:"flex", gap:"0.5rem", marginBottom:"1.5rem" }}>
               <button onClick={save} style={{ flex:1, background:"#8b6cd8", color:"white", border:"none", borderRadius:8, padding:"0.55rem", cursor:"pointer", fontWeight:600, fontSize:"0.875rem" }}>Save</button>
               <button onClick={onClose} style={{ flex:1, background:"#1e1e35", color:"#e8e8f4", border:"none", borderRadius:8, padding:"0.55rem", cursor:"pointer", fontSize:"0.875rem" }}>Cancel</button>
             </div>
-
             <div style={{ borderTop:"1px solid #1e1e35", paddingTop:"1rem" }}>
-              <p style={{ fontSize:"0.72rem", color:"#4a4a70", marginBottom:"0.6rem" }}>
-                Card data is cached locally for 24 hours. Clear cache to force a re-fetch.
-              </p>
-              <button
-                onClick={function() {
-                  if (window.confirm("Clear cached card data? The app will re-fetch everything on next load.")) {
-                    onClearCache(); onClose();
-                  }
-                }}
-                style={{ width:"100%", background:"#200f18", color:"#f87171", border:"1px solid #3d1525", borderRadius:8, padding:"0.5rem", cursor:"pointer", fontSize:"0.8rem" }}
-              >
+              <p style={{ fontSize:"0.72rem", color:"#4a4a70", marginBottom:"0.6rem" }}>Card data cached locally for 24 hours. Clear to force a re-fetch.</p>
+              <button onClick={() => { if (window.confirm("Clear cached card data? App will re-fetch on next load.")) { onClearCache(); onClose(); } }}
+                style={{ width:"100%", background:"#200f18", color:"#f87171", border:"1px solid #3d1525", borderRadius:8, padding:"0.5rem", cursor:"pointer", fontSize:"0.8rem" }}>
                 Clear card cache
               </button>
             </div>
@@ -659,40 +619,38 @@
       const [cardData,     setCardData]     = useState({});
       const [loadingSet,   setLoadingSet]   = useState(new Set());
       const [errors,       setErrors]       = useState({});
-      const [ownedKeys,    setOwnedKeys]    = useState(new Set()); // "normName:::normSet" keys
+      const [ownedKeySet,  setOwnedKeySet]  = useState(new Set()); // Set of "normName:::normSet" keys
       const [selectedCard, setSelectedCard] = useState(null);
       const [search,       setSearch]       = useState("");
       const [filterSlug,   setFilterSlug]   = useState("all");
       const [sortBy,       setSortBy]       = useState("name");
       const [showSettings, setShowSettings] = useState(false);
       const [csvStatus,    setCsvStatus]    = useState(null);
-      const fileRef   = useRef(null);
-      const searchRef = useRef(null);
+      const fileRef = useRef(null), searchRef = useRef(null);
 
-      const getApiKey = function() { return lsGet("pb2_api_key") || ""; };
+      const getApiKey = () => lsGet("pb2_api_key") || "";
 
       useEffect(function() {
         const el = document.getElementById("splash");
-        if (el) { el.style.opacity = "0"; setTimeout(function() { el.remove(); }, 350); }
+        if (el) { el.style.opacity = "0"; setTimeout(() => el.remove(), 350); }
       }, []);
 
-      // Restore owned keys from storage (v2 format: name:::set)
       useEffect(function() {
         const saved = lsGet("pb2_owned_v2") || [];
-        setOwnedKeys(new Set(saved));
+        setOwnedKeySet(new Set(saved));
       }, []);
 
       const loadEntry = useCallback(async function(entry) {
         const slug = toSlug(entry.name);
-        setLoadingSet(function(s) { return new Set([].concat(Array.from(s), [slug])); });
-        setErrors(function(e) { const n = Object.assign({}, e); delete n[slug]; return n; });
+        setLoadingSet(s => new Set([...s, slug]));
+        setErrors(e => { const n = {...e}; delete n[slug]; return n; });
         try {
           const cards = await fetchArtistCards(entry, getApiKey());
-          setCardData(function(d) { return Object.assign({}, d, { [slug]: cards }); });
+          setCardData(d => ({...d, [slug]: cards}));
         } catch(err) {
-          setErrors(function(e) { return Object.assign({}, e, { [slug]: err.message }); });
+          setErrors(e => ({...e, [slug]: err.message}));
         } finally {
-          setLoadingSet(function(s) { const n = new Set(s); n.delete(slug); return n; });
+          setLoadingSet(s => { const n = new Set(s); n.delete(slug); return n; });
         }
       }, []);
 
@@ -701,74 +659,59 @@
       const handleCSV = useCallback(function(file) {
         setCsvStatus("loading");
         Papa.parse(file, {
-          header: true,
-          skipEmptyLines: true,
+          header: true, skipEmptyLines: true,
           complete: function(result) {
-            const pokemon = result.data.filter(function(r) { return (r["Category"] || "").trim() === "Pokemon"; });
-            // Build "normName:::normSet" keys so matching is per-artist, not just per-name.
-            // This prevents a Suicune you own from marking every artist's Suicune as owned.
-            const keys = new Set(
-              pokemon.map(function(r) {
-                return ownedKey(r["Product Name"] || "", r["Set"] || "");
-              }).filter(function(k) { return k !== ":::"; })
-            );
-            setOwnedKeys(keys);
+            const pokemon = result.data.filter(r => (r["Category"] || "").trim() === "Pokemon");
+            // Build ownership key set — multiple keys per card handle series-prefix variations
+            const keys = new Set();
+            pokemon.forEach(function(r) {
+              makeKeys(r["Product Name"] || "", r["Set"] || "").forEach(k => keys.add(k));
+            });
+            setOwnedKeySet(keys);
             lsSet("pb2_owned_v2", Array.from(keys));
             setCsvStatus({ count: pokemon.length });
-            setTimeout(function() { setCsvStatus(null); }, 5000);
+            setTimeout(() => setCsvStatus(null), 5000);
           },
-          error: function() {
-            setCsvStatus(null);
-            alert("Could not read CSV. Make sure it's a Collectr export.");
-          },
+          error: function() { setCsvStatus(null); alert("Could not read CSV. Make sure it's a Collectr export."); },
         });
       }, []);
 
-      const onFileChange = function(e) {
+      const onFileChange = e => {
         const f = e.target.files && e.target.files[0];
         if (f) handleCSV(f);
         e.target.value = "";
       };
 
-      const clearCache = function() {
-        ARTISTS.forEach(function(e) { lsDel(`pb2_cards_${toSlug(e.name)}`); });
-        setCardData({});
-        setErrors({});
+      const clearCache = () => {
+        ARTISTS.forEach(e => lsDel(`pb2_cards_${toSlug(e.name)}`));
+        setCardData({}); setErrors({});
         ARTISTS.forEach(loadEntry);
       };
 
-      const visibleArtists = filterSlug === "all" ? ARTISTS : ARTISTS.filter(function(a) { return toSlug(a.name) === filterSlug; });
+      const visibleArtists = filterSlug === "all" ? ARTISTS : ARTISTS.filter(a => toSlug(a.name) === filterSlug);
 
-      const totalCards = useMemo(function() {
-        return Object.values(cardData).reduce(function(s, a) { return s + a.length; }, 0);
-      }, [cardData]);
-
-      const totalOwned = useMemo(function() {
-        return Object.values(cardData).reduce(function(s, cards) {
-          return s + cards.filter(function(c) {
-            return ownedKeys.has(ownedKey(c.name, c.set && c.set.name || ""));
-          }).length;
-        }, 0);
-      }, [cardData, ownedKeys]);
-
+      const totalCards = useMemo(() => Object.values(cardData).reduce((s, a) => s + a.length, 0), [cardData]);
+      const totalOwned = useMemo(() =>
+        Object.values(cardData).reduce((s, cards) => s + cards.filter(c => isCardOwned(c, ownedKeySet)).length, 0),
+        [cardData, ownedKeySet]
+      );
       const totalPct = totalCards ? Math.round((totalOwned / totalCards) * 100) : 0;
 
       const searchHasResults = search
-        ? visibleArtists.some(function(entry) {
+        ? visibleArtists.some(entry => {
             const cards = cardData[toSlug(entry.name)] || [];
             const q = search.toLowerCase();
-            return cards.some(function(c) { return c.name.toLowerCase().indexOf(q) !== -1; });
+            return cards.some(c => c.name.toLowerCase().indexOf(q) !== -1);
           })
         : true;
 
-      const selectStyle = {
+      const selSt = {
         background:"#0f0f1c", border:"1px solid #1e1e35", borderRadius:8,
         color:"#e8e8f4", padding:"0.4rem 0.6rem", fontSize:"0.76rem",
       };
 
       return (
         <div style={{ minHeight:"100dvh", background:"#07070f" }}>
-
           <header style={{
             position:"sticky", top:0, zIndex:100,
             background:"rgba(7,7,15,0.97)",
@@ -776,13 +719,10 @@
             borderBottom:"1px solid #1e1e35",
           }}>
             <div style={{ maxWidth:860, margin:"0 auto", padding:"0.7rem 1rem" }}>
-
-              {/* Row 1: title + actions */}
+              {/* Row 1 */}
               <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:"0.6rem" }}>
                 <div style={{ display:"flex", alignItems:"baseline", gap:"0.6rem" }}>
-                  <h1 style={{ fontSize:"1rem", fontWeight:800, color:"#e8e8f4", letterSpacing:"-0.02em" }}>
-                    🎴 Artist Binder
-                  </h1>
+                  <h1 style={{ fontSize:"1rem", fontWeight:800, color:"#e8e8f4", letterSpacing:"-0.02em" }}>🎴 Artist Binder</h1>
                   {totalCards > 0 && (
                     <span style={{ fontSize:"0.7rem", color:"#6b6b90", fontVariantNumeric:"tabular-nums" }}>
                       {totalOwned}/{totalCards} · {totalPct}%
@@ -790,73 +730,42 @@
                   )}
                 </div>
                 <div style={{ display:"flex", gap:"0.4rem", alignItems:"center" }}>
-                  {csvStatus === "loading" && (
-                    <span style={{ fontSize:"0.7rem", color:"#6b6b90", display:"flex", alignItems:"center", gap:4 }}>
-                      <IcoSpin/> Reading…
-                    </span>
-                  )}
-                  {csvStatus && csvStatus.count && (
-                    <span style={{ fontSize:"0.7rem", color:"#22c55e" }}>✓ {csvStatus.count} Pokémon loaded</span>
-                  )}
-                  <button onClick={function() { fileRef.current && fileRef.current.click(); }} style={{
+                  {csvStatus === "loading" && <span style={{ fontSize:"0.7rem", color:"#6b6b90", display:"flex", alignItems:"center", gap:4 }}><IcoSpin/> Reading…</span>}
+                  {csvStatus && csvStatus.count && <span style={{ fontSize:"0.7rem", color:"#22c55e" }}>✓ {csvStatus.count} Pokémon loaded</span>}
+                  <button onClick={() => fileRef.current && fileRef.current.click()} style={{
                     display:"flex", alignItems:"center", gap:"0.35rem",
                     background:"#1e1e35", color:"#8b6cd8", border:"1px solid #2a2a50",
-                    borderRadius:8, padding:"0.38rem 0.65rem", cursor:"pointer",
-                    fontSize:"0.75rem", fontWeight:600,
+                    borderRadius:8, padding:"0.38rem 0.65rem", cursor:"pointer", fontSize:"0.75rem", fontWeight:600,
                   }}>
                     <IcoUpload/> Upload CSV
                   </button>
-                  <button onClick={function() { setShowSettings(true); }} style={{
-                    background:"#1e1e35", color:"#6b6b90", border:"1px solid #2a2a50",
-                    borderRadius:8, padding:"0.38rem", cursor:"pointer", display:"flex",
-                  }}>
+                  <button onClick={() => setShowSettings(true)} style={{ background:"#1e1e35", color:"#6b6b90", border:"1px solid #2a2a50", borderRadius:8, padding:"0.38rem", cursor:"pointer", display:"flex" }}>
                     <IcoGear/>
                   </button>
                   <input ref={fileRef} type="file" accept=".csv" onChange={onFileChange} style={{ display:"none" }}/>
                 </div>
               </div>
-
-              {/* Row 2: search + artist filter + sort */}
+              {/* Row 2: search + filters */}
               <div style={{ display:"flex", gap:"0.5rem", flexWrap:"wrap" }}>
                 <div style={{ flex:"1 1 160px", position:"relative", minWidth:0 }}>
-                  <span style={{ position:"absolute", left:"0.6rem", top:"50%", transform:"translateY(-50%)", color:"#6b6b90", display:"flex", pointerEvents:"none" }}>
-                    <IcoSearch/>
-                  </span>
-                  <input
-                    ref={searchRef} type="search" placeholder="Search cards…" value={search}
-                    onChange={function(e) { setSearch(e.target.value); }}
-                    style={Object.assign({}, selectStyle, { width:"100%", padding:"0.4rem 2rem 0.4rem 2rem", fontSize:"0.85rem" })}
+                  <span style={{ position:"absolute", left:"0.6rem", top:"50%", transform:"translateY(-50%)", color:"#6b6b90", display:"flex", pointerEvents:"none" }}><IcoSearch/></span>
+                  <input ref={searchRef} type="search" placeholder="Search cards…" value={search}
+                    onChange={e => setSearch(e.target.value)}
+                    style={{...selSt, width:"100%", padding:"0.4rem 2rem 0.4rem 2rem", fontSize:"0.85rem"}}
                   />
                   {search && (
-                    <button onClick={function() { setSearch(""); searchRef.current && searchRef.current.focus(); }} style={{
-                      position:"absolute", right:"0.4rem", top:"50%", transform:"translateY(-50%)",
-                      background:"none", border:"none", color:"#6b6b90", cursor:"pointer", display:"flex",
-                    }}>
+                    <button onClick={() => { setSearch(""); searchRef.current && searchRef.current.focus(); }} style={{ position:"absolute", right:"0.4rem", top:"50%", transform:"translateY(-50%)", background:"none", border:"none", color:"#6b6b90", cursor:"pointer", display:"flex" }}>
                       <IcoX/>
                     </button>
                   )}
                 </div>
-
-                <select value={filterSlug} onChange={function(e) { setFilterSlug(e.target.value); }} style={Object.assign({}, selectStyle, { maxWidth:148 })}>
+                <select value={filterSlug} onChange={e => setFilterSlug(e.target.value)} style={{...selSt, maxWidth:148}}>
                   <option value="all">All Artists</option>
-                  <optgroup label="Main">
-                    {ARTISTS.filter(function(a) { return a.tier==="main"; }).map(function(a) {
-                      return <option key={a.name} value={toSlug(a.name)}>{a.name}</option>;
-                    })}
-                  </optgroup>
-                  <optgroup label="Secondary">
-                    {ARTISTS.filter(function(a) { return a.tier==="secondary"; }).map(function(a) {
-                      return <option key={a.name} value={toSlug(a.name)}>{a.name}</option>;
-                    })}
-                  </optgroup>
-                  <optgroup label="Special">
-                    {ARTISTS.filter(function(a) { return a.tier==="special"; }).map(function(a) {
-                      return <option key={a.name} value={toSlug(a.name)}>{a.name}</option>;
-                    })}
-                  </optgroup>
+                  <optgroup label="Main">{ARTISTS.filter(a => a.tier==="main").map(a => <option key={a.name} value={toSlug(a.name)}>{a.name}</option>)}</optgroup>
+                  <optgroup label="Secondary">{ARTISTS.filter(a => a.tier==="secondary").map(a => <option key={a.name} value={toSlug(a.name)}>{a.name}</option>)}</optgroup>
+                  <optgroup label="Special">{ARTISTS.filter(a => a.tier==="special").map(a => <option key={a.name} value={toSlug(a.name)}>{a.name}</option>)}</optgroup>
                 </select>
-
-                <select value={sortBy} onChange={function(e) { setSortBy(e.target.value); }} style={Object.assign({}, selectStyle, { maxWidth:148 })}>
+                <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{...selSt, maxWidth:148}}>
                   <option value="name">Name A–Z</option>
                   <option value="missing">Missing first</option>
                   <option value="owned">Owned first</option>
@@ -870,7 +779,6 @@
           </header>
 
           <main style={{ maxWidth:860, margin:"0 auto", padding:"1rem" }}>
-
             {totalCards > 0 && (
               <div style={{ height:2, background:"#1e1e35", borderRadius:1, overflow:"hidden", marginBottom:"1.5rem" }}>
                 <div className="prog-fill" style={{ width:`${totalPct}%`, height:"100%", background:"#8b6cd8", borderRadius:1 }}/>
@@ -878,39 +786,26 @@
             )}
 
             {visibleArtists.map(function(entry) {
-              const slug      = toSlug(entry.name);
-              const cards     = cardData[slug] || [];
-              const isLoading = loadingSet.has(slug);
-              const err       = errors[slug];
-
-              if (isLoading && !cards.length) {
-                return (
-                  <div key={entry.name} style={{ display:"flex", alignItems:"center", gap:"0.5rem", padding:"0.6rem 0", color:"#6b6b90", fontSize:"0.8rem" }}>
-                    <IcoSpin/> Loading {entry.name}…
-                  </div>
-                );
-              }
-              if (err) {
-                return (
-                  <div key={entry.name} style={{ padding:"0.6rem 0", fontSize:"0.78rem", color:"#f87171", display:"flex", alignItems:"center", gap:"0.5rem" }}>
-                    <span>⚠ {entry.name}: {err}</span>
-                    <button onClick={function() { loadEntry(entry); }} style={{ color:"#8b6cd8", background:"none", border:"none", cursor:"pointer", display:"flex", alignItems:"center", gap:3, fontSize:"0.75rem" }}>
-                      <IcoRetry/> retry
-                    </button>
-                  </div>
-                );
-              }
+              const slug = toSlug(entry.name), cards = cardData[slug] || [];
+              const isLoading = loadingSet.has(slug), err = errors[slug];
+              if (isLoading && !cards.length) return (
+                <div key={entry.name} style={{ display:"flex", alignItems:"center", gap:"0.5rem", padding:"0.6rem 0", color:"#6b6b90", fontSize:"0.8rem" }}>
+                  <IcoSpin/> Loading {entry.name}…
+                </div>
+              );
+              if (err) return (
+                <div key={entry.name} style={{ padding:"0.6rem 0", fontSize:"0.78rem", color:"#f87171", display:"flex", alignItems:"center", gap:"0.5rem" }}>
+                  <span>⚠ {entry.name}: {err}</span>
+                  <button onClick={() => loadEntry(entry)} style={{ color:"#8b6cd8", background:"none", border:"none", cursor:"pointer", display:"flex", alignItems:"center", gap:3, fontSize:"0.75rem" }}>
+                    <IcoRetry/> retry
+                  </button>
+                </div>
+              );
               if (!cards.length) return null;
-
               return (
-                <ArtistSection
-                  key={entry.name}
-                  entry={entry}
-                  cards={cards}
-                  ownedKeys={ownedKeys}
-                  onCardClick={setSelectedCard}
-                  searchQuery={search}
-                  sortBy={sortBy}
+                <ArtistSection key={entry.name} entry={entry} cards={cards}
+                  ownedKeySet={ownedKeySet} onCardClick={setSelectedCard}
+                  searchQuery={search} sortBy={sortBy}
                 />
               );
             })}
@@ -920,21 +815,16 @@
                 No cards matching "{search}"
               </div>
             )}
-
             <div style={{ marginTop:"3rem", paddingTop:"1rem", borderTop:"1px solid #1e1e35", fontSize:"0.68rem", color:"#3a3a5a", textAlign:"center" }}>
               Card data from pokemontcg.io · Prices via TCGPlayer · Cached 24h locally
             </div>
           </main>
 
           {selectedCard && (
-            <CardModal
-              card={selectedCard}
-              owned={ownedKeys.has(ownedKey(selectedCard.name, selectedCard.set && selectedCard.set.name || ""))}
-              onClose={function() { setSelectedCard(null); }}
-            />
+            <CardModal card={selectedCard} owned={isCardOwned(selectedCard, ownedKeySet)} onClose={() => setSelectedCard(null)}/>
           )}
           {showSettings && (
-            <SettingsPanel onClose={function() { setShowSettings(false); }} onClearCache={clearCache}/>
+            <SettingsPanel onClose={() => setShowSettings(false)} onClearCache={clearCache}/>
           )}
         </div>
       );
