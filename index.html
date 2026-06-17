@@ -135,50 +135,37 @@
     const fmt$     = n => (n != null && !isNaN(n)) ? `$${Number(n).toFixed(2)}` : "—";
     const todayStr = () => new Date().toISOString().slice(0, 10);
 
-    // Normalise set names: handles em-dash series prefixes ("Sword & Shield—Vivid Voltage")
-    // and common formatting differences between Collectr and pokemontcg.io exports.
+    // Normalise card number: strip "/total" suffix so "27/123" → "27", keep promos as-is.
+    const normNum = n => (n || "").toLowerCase().trim().replace(/\/\d+$/, "").trim();
+
+    // Normalise set name (kept for fallback matching only).
     const normSet = s => (s || "")
       .toLowerCase()
       .replace(/&/g, "and")
-      .replace(/[—–]/g, " ")          // em-dash / en-dash → space (handles "Series—Set" format)
-      .replace(/[^a-z0-9\s]/g, "")   // strip remaining punctuation
+      .replace(/[—–]/g, " ")
+      .replace(/[^a-z0-9\s]/g, "")
       .replace(/\bpromos?\b/g, "promo")
       .replace(/\s+/g, " ")
       .trim();
 
-    // Strip common series prefixes so Collectr's "Sword and Shield Vivid Voltage"
-    // also matches pokemontcg.io's plain "Vivid Voltage".
-    const SERIES_PFX = [
-      "scarlet and violet", "sword and shield", "swsh",
-      "sun and moon", "sm", "xy", "black and white", "bw",
-      "diamond and pearl", "heartgold soulsilver", "platinum", "ex",
-    ];
-    const normSetStripped = s => {
-      const n = normSet(s);
-      for (var i = 0; i < SERIES_PFX.length; i++) {
-        var pfx = SERIES_PFX[i];
-        if (n.indexOf(pfx + " ") === 0) return n.slice(pfx.length + 1);
-      }
-      return n;
-    };
-
-    // Build ALL possible ownership keys for a (name, setName) pair.
-    // We add both the exact-normalised set AND the prefix-stripped variant so
-    // that a CSV row "Sword & Shield—Vivid Voltage" matches the API's "Vivid Voltage".
-    const makeKeys = function(cardName, setName) {
+    // Build ownership keys for a card.
+    // PRIMARY key: name + card number  — precise, no set-name ambiguity.
+    // FALLBACK key: name + set         — catches cards with missing/mismatched numbers.
+    const makeKeys = function(cardName, cardNumber, setName) {
       var n = normName(cardName);
       if (!n) return [];
-      var exact    = normSet(setName);
-      var stripped = normSetStripped(setName);
-      var keys = [n + ":::" + exact];
-      if (stripped !== exact) keys.push(n + ":::" + stripped);
+      var keys = [];
+      var num = normNum(cardNumber);
+      if (num) keys.push(n + "::num::" + num);           // primary: name + number
+      var s = normSet(setName);
+      if (s) keys.push(n + "::set::" + s);               // fallback: name + set
       return keys;
     };
 
-    // Check if a pokemontcg.io card is owned: any of its keys must be in the owned set.
+    // Check if a pokemontcg.io card is owned.
     const isCardOwned = function(card, ownedKeySet) {
       if (!ownedKeySet || !ownedKeySet.size) return false;
-      var keys = makeKeys(card.name || "", card.set && card.set.name || "");
+      var keys = makeKeys(card.name || "", card.number || "", card.set && card.set.name || "");
       for (var i = 0; i < keys.length; i++) {
         if (ownedKeySet.has(keys[i])) return true;
       }
@@ -662,10 +649,10 @@
           header: true, skipEmptyLines: true,
           complete: function(result) {
             const pokemon = result.data.filter(r => (r["Category"] || "").trim() === "Pokemon");
-            // Build ownership key set — multiple keys per card handle series-prefix variations
+            // Primary match: name+number (precise). Fallback: name+set.
             const keys = new Set();
             pokemon.forEach(function(r) {
-              makeKeys(r["Product Name"] || "", r["Set"] || "").forEach(k => keys.add(k));
+              makeKeys(r["Product Name"] || "", r["Card Number"] || "", r["Set"] || "").forEach(k => keys.add(k));
             });
             setOwnedKeySet(keys);
             lsSet("pb2_owned_v2", Array.from(keys));
