@@ -23,7 +23,7 @@
     body{background:#07070f;color:#e8e8f4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;-webkit-text-size-adjust:100%;overscroll-behavior:none;}
     ::-webkit-scrollbar{width:5px;} ::-webkit-scrollbar-track{background:#07070f;} ::-webkit-scrollbar-thumb{background:#2a2a45;border-radius:3px;}
     .card-tile{position:relative;cursor:pointer;border-radius:6px;overflow:hidden;}
-    .card-tile img{display:block;width:100%;height:auto;border-radius:6px;transition:transform .15s ease,filter .15s ease;}
+    .card-tile img{display:block;width:100%;height:auto;border-radius:6px;transition:transform .15s ease,filter .15s ease;background:#1a1a2e;}
     .card-tile.missing img{filter:grayscale(1) brightness(0.3);}
     .card-tile.owned   img{filter:none;}
     .card-tile:hover   img{transform:translateY(-2px) scale(1.03);}
@@ -66,9 +66,12 @@ const {useState,useEffect,useCallback,useRef,useMemo}=React;
 const SUPA_URL="https://hbpjbefohkcnovlwvqhc.supabase.co";
 const SUPA_KEY="sb_publishable_UM5rWTAunNLDNbIXmtL8MQ_I8yl0iIH";
 const sb=window.supabase.createClient(SUPA_URL,SUPA_KEY);
-const API_BASE="https://api.pokemontcg.io/v2";
+
+// ── TCGdex — replaces pokemontcg.io (abandoned by its maintainers in favor of paid Scrydex) ──
+const TCG_BASE="https://api.tcgdex.net/v2/en";
 const CACHE_TTL=24*60*60*1000;
 const REDIRECT="https://vladimirbuslayev.github.io/fire-chicken/";
+const FETCH_BATCH=10; // concurrent detail fetches per chunk
 
 const ARTISTS=[
   {name:"Yuka Morii",      tier:"main",      isSet:false},
@@ -91,7 +94,7 @@ const ARTISTS=[
   {name:"gapao",           tier:"secondary", isSet:false},
   {name:"okubo",           tier:"secondary", isSet:false},
   {name:"fukuda",          tier:"secondary", isSet:false},
-  {name:"Pokémon GO",      tier:"special",   isSet:true,query:"set.id:pgo"},
+  {name:"Pokémon GO",      tier:"special",   isSet:true,setId:"pgo"},
 ];
 
 const lsGet=k=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):null;}catch{return null;}};
@@ -100,14 +103,31 @@ const lsDel=k=>{try{localStorage.removeItem(k);}catch{}};
 
 const toSlug  =s=>s.toLowerCase().replace(/[^a-z0-9]/g,"-").replace(/-+/g,"-").replace(/^-|-$/g,"");
 const normName=s=>(s||"").toLowerCase().trim().replace(/[^a-z0-9\s]/g,"").replace(/\s+/g," ");
-const normNum =n=>(n||"").toLowerCase().trim().replace(/\/.*$/,"").trim();
+const normNum =n=>(n||"").toString().toLowerCase().trim().replace(/\/.*$/,"").trim();
 const normSet =s=>(s||"").toLowerCase().replace(/&/g,"and").replace(/[—–]/g," ").replace(/[^a-z0-9\s]/g,"").replace(/\bpromos?\b/g,"promo").replace(/\s+/g," ").trim();
 const fmt$    =n=>(n!=null&&!isNaN(n))?`$${Number(n).toFixed(2)}`:"—";
 const todayStr=()=>new Date().toISOString().slice(0,10);
 
 const makeKeys=(cn,num,sn)=>{const n=normName(cn);if(!n)return[];const k=[];const nu=normNum(num);if(nu)k.push(n+"::num::"+nu);const s=normSet(sn);if(s)k.push(n+"::set::"+s);return k;};
-const isCardOwned=(card,ownedKeySet,mo,mm)=>{if(mm.has(card.id))return false;if(mo.has(card.id))return true;return makeKeys(card.name||"",card.number||"",card.set&&card.set.name||"").some(k=>ownedKeySet.has(k));};
-const getBestPrice=card=>{const p=card&&card.tcgplayer&&card.tcgplayer.prices?card.tcgplayer.prices:{};for(const k of["holofoil","1stEditionHolofoil","unlimitedHolofoil","reverseHolofoil","normal","unlimited"])if(p[k]&&p[k].market!=null)return{amount:p[k].market,variant:k,prices:p[k]};const f=Object.keys(p)[0];if(f&&p[f]&&p[f].market!=null)return{amount:p[f].market,variant:f,prices:p[f]};return null;};
+const isCardOwned=(card,ownedKeySet,mo,mm)=>{if(mm.has(card.id))return false;if(mo.has(card.id))return true;return makeKeys(card.name||"",card.localId||"",card.set&&card.set.name||"").some(k=>ownedKeySet.has(k));};
+
+// ── Image helpers — TCGdex returns a base URL needing a quality/extension suffix ──
+const imgSmall=card=>card&&card.image?`${card.image}/low.webp`:null;
+const imgLarge=card=>card&&card.image?`${card.image}/high.webp`:null;
+
+// ── Pricing — TCGdex stores TCGPlayer data under pricing.tcgplayer.{variant}.marketPrice ──
+const PRICE_VARIANT_ORDER=["holofoil","reverse-holofoil","normal","1st-edition-holofoil","1st-edition","unlimited-holofoil","unlimited"];
+const getBestPrice=card=>{
+  const p=card&&card.pricing&&card.pricing.tcgplayer;
+  if(!p)return null;
+  for(const k of PRICE_VARIANT_ORDER){
+    if(p[k]&&p[k].marketPrice!=null)return{amount:p[k].marketPrice,variant:k,prices:{low:p[k].lowPrice,mid:p[k].midPrice,high:p[k].highPrice}};
+  }
+  const keys=Object.keys(p).filter(k=>k!=="updated"&&k!=="unit");
+  const first=keys[0];
+  if(first&&p[first]&&p[first].marketPrice!=null)return{amount:p[first].marketPrice,variant:first,prices:{low:p[first].lowPrice,mid:p[first].midPrice,high:p[first].highPrice}};
+  return null;
+};
 
 const sortCards=(arr,sortBy,checkOwned)=>{
   if(!arr||!arr.length)return arr;const a2=arr.slice();
@@ -145,21 +165,38 @@ async function saveCollection(uid,keys){return sb.from("user_collection").upsert
 async function saveOverride(uid,cardId,action){if(action==="reset")return sb.from("card_overrides").delete().eq("user_id",uid).eq("card_id",cardId);return sb.from("card_overrides").upsert({user_id:uid,card_id:cardId,override_type:action},{onConflict:"user_id,card_id"});}
 async function savePricePoint(uid,cardId,price,date){return sb.from("price_history").upsert({user_id:uid,card_id:cardId,price,recorded_date:date},{onConflict:"user_id,card_id,recorded_date"});}
 
-// ── API ───────────────────────────────────────────────────────────────────────
-async function apiFetch(q,apiKey){
-  let all=[],page=1;const headers=apiKey?{"X-Api-Key":apiKey}:{};
-  while(true){
-    const res=await fetch(`${API_BASE}/cards?q=${encodeURIComponent(q)}&pageSize=250&page=${page}&orderBy=name`,{headers});
-    if(!res.ok)throw new Error(`API error ${res.status}`);
-    const json=await res.json();all=all.concat(json.data||[]);
-    if(all.length>=(json.totalCount||0)||!(json.data||[]).length)break;page++;
-  }return all;
+// ── TCGdex API ─────────────────────────────────────────────────────────────────
+async function fetchCardBriefs(entry){
+  if(entry.isSet){
+    const res=await fetch(`${TCG_BASE}/sets/${entry.setId}`);
+    if(!res.ok)throw new Error(`Set "${entry.setId}" error ${res.status}`);
+    const json=await res.json();
+    return json.cards||[];
+  }
+  const res=await fetch(`${TCG_BASE}/illustrators/${encodeURIComponent(entry.name)}`);
+  if(!res.ok)throw new Error(`Illustrator lookup error ${res.status}`);
+  const json=await res.json();
+  return Array.isArray(json)?json:[];
 }
-async function fetchArtistCards(entry,apiKey){
-  const ck=`pb2_cards_${toSlug(entry.name)}`;const cached=lsGet(ck);
+async function fetchFullCard(id){
+  const res=await fetch(`${TCG_BASE}/cards/${id}`);
+  if(!res.ok)return null;
+  return res.json();
+}
+async function fetchArtistCards(entry){
+  const ck=`pb3_cards_${toSlug(entry.name)}`;
+  const cached=lsGet(ck);
   if(cached&&cached.ts&&Date.now()-cached.ts<CACHE_TTL)return cached.cards;
-  const q=entry.isSet?entry.query:`artist:"${entry.name}"`;
-  const cards=await apiFetch(q,apiKey);lsSet(ck,{cards,ts:Date.now()});return cards;
+  const briefs=await fetchCardBriefs(entry);
+  const fullCards=[];
+  for(let i=0;i<briefs.length;i+=FETCH_BATCH){
+    const batch=briefs.slice(i,i+FETCH_BATCH);
+    const results=await Promise.all(batch.map(b=>fetchFullCard(b.id).catch(()=>null)));
+    results.forEach(c=>{if(c)fullCards.push(c);});
+  }
+  fullCards.sort((a,b)=>(a.name||"").localeCompare(b.name||""));
+  lsSet(ck,{cards:fullCards,ts:Date.now()});
+  return fullCards;
 }
 
 // ── ICONS ─────────────────────────────────────────────────────────────────────
@@ -174,30 +211,21 @@ const IcoEdit =()=><Ico><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0
 const IcoSpin =()=><svg className="spinner" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 2a10 10 0 0 1 0 20A10 10 0 0 1 12 2" strokeOpacity="0.2"/><path d="M12 2a10 10 0 0 1 10 10"/></svg>;
 const IcoChev =({open})=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" style={{transform:open?"rotate(0deg)":"rotate(-90deg)",transition:"transform .2s ease",flexShrink:0}}><polyline points="6 9 12 15 18 9"/></svg>;
 
-// ── BLAZIKEN LOGO — flat geometric side-profile inspired by minimalist fan art ─
-// Dual angular crest spikes, hackle feathers, distinctive tri-colour eye
+// ── BLAZIKEN LOGO ──────────────────────────────────────────────────────────────
 function BlazLogo({size=32,glow=false}){
   return(
     <svg width={size} height={size} viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg"
       style={{display:"block",filter:glow?"drop-shadow(0 0 14px rgba(220,72,64,0.9))":"none"}}>
-      {/* ── Left spike: very long thin diagonal to far upper-left ── */}
       <polygon points="86,112 98,100 16,8" fill="#DC4840"/>
-      {/* ── Right spike: tall, upper-right ── */}
       <polygon points="130,92 150,98 184,10" fill="#DC4840"/>
-      {/* ── Main face body ── */}
       <polygon points="98,100 130,92 150,98 158,120 154,150 142,168 122,177 102,176 84,165 76,148 76,128 82,114" fill="#DC4840"/>
-      {/* ── Hackle feathers — 4 angular points left of face ── */}
       <polygon points="82,114 56,107 70,122" fill="#DC4840"/>
       <polygon points="70,122 44,118 60,134" fill="#DC4840"/>
       <polygon points="60,134 36,132 54,146" fill="#DC4840"/>
       <polygon points="54,146 32,146 48,158" fill="#DC4840"/>
-      {/* ── Snout extension lower-right ── */}
       <polygon points="154,150 142,168 170,170" fill="#DC4840"/>
-      {/* ── Eye: gold sclera ── */}
       <ellipse cx="112" cy="142" rx="24" ry="16" fill="#E8C030"/>
-      {/* ── Eye: blue iris lower portion ── */}
       <ellipse cx="119" cy="149" rx="16" ry="12" fill="#4A88C8"/>
-      {/* ── Eye: grey pupil ── */}
       <circle cx="118" cy="147" r="8" fill="#6E7280"/>
     </svg>
   );
@@ -215,7 +243,6 @@ const FDEFS=[
   {left:"90%",w:50, h:170,blur:9, delay:.65,dur:1.6,anim:"flameFlicker2"},
 ];
 const EDEFS=Array.from({length:22},(_,i)=>({left:(5+i*4.2+Math.sin(i*1.3)*8)%95+"%",size:3+(i%4),delay:(i*.37)%4,dur:2.2+(i%3)*.8}));
-
 function FlameBackground({dim}){
   const op=dim?.5:1;
   return(<>
@@ -247,21 +274,14 @@ function LandingPage({user,onEnter,onSendLink,onSignOut}){
       style={{position:"fixed",inset:0,zIndex:9999,cursor:isLoggedIn?"pointer":"default",background:"radial-gradient(ellipse at 50% 110%,#3d0f00 0%,#1a0500 40%,#080200 70%,#030100 100%)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
       <FlameBackground/>
       <div className="fade-in" style={{position:"relative",zIndex:10,textAlign:"center",padding:"1rem",width:"100%",maxWidth:400}}>
-        <div style={{display:"flex",justifyContent:"center",marginBottom:"1.25rem"}}>
-          <BlazLogo size={80} glow/>
-        </div>
+        <div style={{display:"flex",justifyContent:"center",marginBottom:"1.25rem"}}><BlazLogo size={80} glow/></div>
         <h1 style={{fontSize:"clamp(2.4rem,9vw,4.2rem)",fontWeight:900,letterSpacing:"-.03em",color:"#fff8f0",lineHeight:1,textShadow:"0 0 60px rgba(255,100,0,0.9),0 0 20px rgba(255,200,0,0.5)",marginBottom:".4rem"}}>
           Artist Binder
         </h1>
-        {/* Dedication */}
-        <p style={{fontSize:".72rem",letterSpacing:".18em",color:"#c87840",marginBottom:".3rem",fontWeight:500}}>
-          Komiya. Morii. Kanda. Nishida.
-        </p>
+        <p style={{fontSize:".72rem",letterSpacing:".18em",color:"#c87840",marginBottom:".3rem",fontWeight:500}}>Komiya. Morii. Kanda. Nishida.</p>
         {isLoggedIn?(
           <>
-            <p style={{fontSize:".78rem",color:"#5a2a10",fontStyle:"italic",marginBottom:"2.25rem",letterSpacing:".04em"}}>
-              The art is the point.
-            </p>
+            <p style={{fontSize:".78rem",color:"#5a2a10",fontStyle:"italic",marginBottom:"2.25rem",letterSpacing:".04em"}}>The art is the point.</p>
             <button onClick={e=>{e.stopPropagation();enter();}} style={{background:"linear-gradient(135deg,#ff5500,#ff2200)",color:"#fff8f0",border:"none",borderRadius:50,padding:".9rem 3rem",fontSize:"1rem",fontWeight:800,cursor:"pointer",letterSpacing:".1em",boxShadow:"0 0 40px rgba(255,60,0,0.6),0 0 80px rgba(255,60,0,0.3)"}}
               onMouseEnter={e=>e.currentTarget.style.transform="scale(1.06)"} onMouseLeave={e=>e.currentTarget.style.transform="scale(1)"}>
               ENTER BINDER
@@ -306,7 +326,6 @@ function Dashboard({cardData,checkOwned,favorites,user,onGoBinder,onUploadCSV,cs
     return{...entry,cards,total:cards.length,owned,pct:cards.length?Math.round((owned/cards.length)*100):0};
   }).filter(a=>a.total>0),[cardData,checkOwned]);
 
-  // Most Wanted = favorited cards not yet owned
   const mostWanted=useMemo(()=>{
     const w=[];
     ARTISTS.forEach(entry=>{
@@ -323,14 +342,11 @@ function Dashboard({cardData,checkOwned,favorites,user,onGoBinder,onUploadCSV,cs
 
   return(
     <div style={{minHeight:"100dvh",background:"#07070f",paddingBottom:"5rem"}}>
-      {/* Header */}
       <header style={{position:"sticky",top:0,zIndex:100,background:"rgba(7,7,15,0.97)",backdropFilter:"blur(18px)",borderBottom:"1px solid #1e1e35"}}>
         <div style={{maxWidth:900,margin:"0 auto",padding:".6rem 1rem",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
           <div style={{display:"flex",alignItems:"center",gap:".6rem",cursor:"pointer"}} onClick={()=>onGoBinder("landing")}>
             <BlazLogo size={28}/>
-            <div>
-              <span style={{fontWeight:800,fontSize:".95rem",color:"#e8e8f4",letterSpacing:"-.02em"}}>Artist Binder</span>
-            </div>
+            <span style={{fontWeight:800,fontSize:".95rem",color:"#e8e8f4",letterSpacing:"-.02em"}}>Artist Binder</span>
           </div>
           <div style={{display:"flex",gap:".4rem",alignItems:"center"}}>
             {csvStatus==="loading"&&<span style={{fontSize:".7rem",color:"#6b6b90",display:"flex",alignItems:"center",gap:4}}><IcoSpin/>Reading…</span>}
@@ -347,20 +363,12 @@ function Dashboard({cardData,checkOwned,favorites,user,onGoBinder,onUploadCSV,cs
       </header>
 
       <div style={{maxWidth:900,margin:"0 auto",padding:"0 1rem"}}>
-        {/* Hero */}
         <div style={{marginTop:"1.5rem",marginBottom:"1.5rem",background:"radial-gradient(ellipse at 25% 50%,rgba(220,72,64,0.1) 0%,transparent 65%)",border:"1px solid #1e1e35",borderRadius:20,padding:"2rem 1.5rem",display:"flex",flexWrap:"wrap",alignItems:"center",gap:"2rem"}}>
-          <div style={{display:"flex",justifyContent:"center",flexShrink:0}}>
-            <BlazLogo size={120} glow/>
-          </div>
+          <div style={{display:"flex",justifyContent:"center",flexShrink:0}}><BlazLogo size={120} glow/></div>
           <div style={{flex:1,minWidth:180}}>
-            <div style={{fontSize:".6rem",letterSpacing:".18em",color:"#5a2e10",marginBottom:".3rem",fontWeight:600}}>
-              {user?.email||"YOUR COLLECTION"}
-            </div>
-            <h2 style={{fontSize:"clamp(1.6rem,5vw,2.6rem)",fontWeight:900,color:"#fff8f0",letterSpacing:"-.03em",lineHeight:1,marginBottom:".3rem",textShadow:"0 0 30px rgba(220,72,64,0.35)"}}>
-              YOUR BINDER
-            </h2>
+            <div style={{fontSize:".6rem",letterSpacing:".18em",color:"#5a2e10",marginBottom:".3rem",fontWeight:600}}>{user?.email||"YOUR COLLECTION"}</div>
+            <h2 style={{fontSize:"clamp(1.6rem,5vw,2.6rem)",fontWeight:900,color:"#fff8f0",letterSpacing:"-.03em",lineHeight:1,marginBottom:".3rem",textShadow:"0 0 30px rgba(220,72,64,0.35)"}}>YOUR BINDER</h2>
             <p style={{fontSize:".7rem",color:"#5a2a10",fontStyle:"italic",marginBottom:"1.25rem",letterSpacing:".03em"}}>The art is the point.</p>
-            {/* Stats */}
             <div style={{display:"flex",flexWrap:"wrap",gap:"1.5rem",marginBottom:"1.25rem"}}>
               <div>
                 <div style={{fontSize:"clamp(2rem,6vw,3.2rem)",fontWeight:900,color:"#FF8833",letterSpacing:"-.04em",lineHeight:1}}>{totalPct}<span style={{fontSize:".5em",opacity:.7}}>%</span></div>
@@ -383,39 +391,32 @@ function Dashboard({cardData,checkOwned,favorites,user,onGoBinder,onUploadCSV,cs
           </div>
         </div>
 
-        {/* Most Wanted */}
         <section style={{marginBottom:"1.5rem"}}>
-          <h3 style={{fontSize:".62rem",letterSpacing:".14em",color:"#6b6b90",fontWeight:700,marginBottom:".75rem",paddingBottom:".5rem",borderBottom:"1px solid #1e1e35"}}>
-            ★ MOST WANTED
-          </h3>
+          <h3 style={{fontSize:".62rem",letterSpacing:".14em",color:"#6b6b90",fontWeight:700,marginBottom:".75rem",paddingBottom:".5rem",borderBottom:"1px solid #1e1e35"}}>★ MOST WANTED</h3>
           {favorites.size===0?(
             <div style={{fontSize:".8rem",color:"#3a3a5a",padding:"1.25rem",textAlign:"center",border:"1px dashed #1e1e35",borderRadius:12,lineHeight:1.6}}>
               Tap the <strong style={{color:"#E8C030"}}>★</strong> on any card to add it to your Most Wanted list.<br/>
               <span style={{fontSize:".72rem",color:"#2a2a4a"}}>Your wishlist for the next card show.</span>
             </div>
           ):mostWanted.length===0?(
-            <div style={{fontSize:".82rem",color:"#22c55e",padding:"1.25rem",textAlign:"center",border:"1px solid rgba(34,197,94,0.2)",borderRadius:12}}>
-              🎉 You own every card on your Most Wanted list.
-            </div>
+            <div style={{fontSize:".82rem",color:"#22c55e",padding:"1.25rem",textAlign:"center",border:"1px solid rgba(34,197,94,0.2)",borderRadius:12}}>🎉 You own every card on your Most Wanted list.</div>
           ):(
             <div style={{display:"flex",flexDirection:"column",gap:"2px"}}>
               {mostWanted.map(({card,artist},i)=>{
-                const ebayQ=encodeURIComponent(`${card.name} ${card.number||""} ${(card.set?.name||"").replace(/&/g,"and")} pokemon card near mint`);
+                const ebayQ=encodeURIComponent(`${card.name} ${card.localId||""} ${(card.set?.name||"").replace(/&/g,"and")} pokemon card near mint`);
                 const ebayUrl=`https://www.ebay.com/sch/i.html?_nkw=${ebayQ}&LH_Complete=1&LH_Sold=1`;
                 const price=getBestPrice(card);
+                const sm=imgSmall(card);
                 return(
                   <div key={card.id} className="wanted-row" style={{display:"flex",alignItems:"center",gap:".75rem",padding:".6rem .75rem"}}>
                     <div style={{fontSize:".7rem",color:"#3a3a5a",fontWeight:700,flexShrink:0,width:18}}>{i+1}</div>
-                    {card.images?.small&&<img src={card.images.small} alt={card.name} style={{width:38,height:"auto",borderRadius:4,filter:"grayscale(0.15)",flexShrink:0}}/>}
+                    {sm&&<img src={sm} alt={card.name} style={{width:38,height:"auto",borderRadius:4,filter:"grayscale(0.15)",flexShrink:0}}/>}
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{fontSize:".85rem",color:"#e8e8f4",fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{card.name}</div>
                       <div style={{fontSize:".67rem",color:"#6b6b90"}}>{artist.name} · {card.set?.name}</div>
                     </div>
                     {price&&<div style={{fontWeight:700,color:"#9b9bc0",fontSize:".82rem",flexShrink:0}}>{fmt$(price.amount)}</div>}
-                    <a href={ebayUrl} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()}
-                      style={{display:"flex",alignItems:"center",background:"#1a1810",color:"#c8a020",border:"1px solid #3a3010",borderRadius:6,padding:"3px 8px",textDecoration:"none",fontSize:".68rem",fontWeight:600,flexShrink:0,whiteSpace:"nowrap"}}>
-                      eBay →
-                    </a>
+                    <a href={ebayUrl} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()} style={{display:"flex",alignItems:"center",background:"#1a1810",color:"#c8a020",border:"1px solid #3a3010",borderRadius:6,padding:"3px 8px",textDecoration:"none",fontSize:".68rem",fontWeight:600,flexShrink:0,whiteSpace:"nowrap"}}>eBay →</a>
                   </div>
                 );
               })}
@@ -423,46 +424,30 @@ function Dashboard({cardData,checkOwned,favorites,user,onGoBinder,onUploadCSV,cs
           )}
         </section>
 
-        {/* Artist Progress — Main */}
         <section style={{marginBottom:"1.5rem"}}>
           <h3 style={{fontSize:".62rem",letterSpacing:".14em",color:"#6b6b90",fontWeight:700,marginBottom:".75rem",paddingBottom:".5rem",borderBottom:"1px solid #1e1e35"}}>MAIN ARTISTS</h3>
           <div style={{display:"flex",flexDirection:"column",gap:"2px"}}>
             {mainStats.map(entry=>(
-              <div key={entry.name} className="artist-row" onClick={()=>onGoBinder(toSlug(entry.name))}
-                style={{display:"flex",alignItems:"center",gap:".75rem",padding:".6rem .75rem"}}>
-                <div style={{width:145,flexShrink:0}}>
-                  <span style={{fontSize:".875rem",fontWeight:600,color:entry.pct===100?"#22c55e":"#e8e8f4"}}>{entry.name}{entry.pct===100?" ✓":""}</span>
-                </div>
+              <div key={entry.name} className="artist-row" onClick={()=>onGoBinder(toSlug(entry.name))} style={{display:"flex",alignItems:"center",gap:".75rem",padding:".6rem .75rem"}}>
+                <div style={{width:145,flexShrink:0}}><span style={{fontSize:".875rem",fontWeight:600,color:entry.pct===100?"#22c55e":"#e8e8f4"}}>{entry.name}{entry.pct===100?" ✓":""}</span></div>
                 <div style={{flex:1,minWidth:0}}>
-                  <div style={{height:4,background:"#1e1e35",borderRadius:2,overflow:"hidden"}}>
-                    <div className="prog-fill" style={{width:`${entry.pct}%`,height:"100%",borderRadius:2,background:entry.pct===100?"#22c55e":"linear-gradient(90deg,#7b5cc8,#9b7ce8)"}}/>
-                  </div>
+                  <div style={{height:4,background:"#1e1e35",borderRadius:2,overflow:"hidden"}}><div className="prog-fill" style={{width:`${entry.pct}%`,height:"100%",borderRadius:2,background:entry.pct===100?"#22c55e":"linear-gradient(90deg,#7b5cc8,#9b7ce8)"}}/></div>
                 </div>
-                <div style={{fontSize:".72rem",color:"#6b6b90",fontVariantNumeric:"tabular-nums",flexShrink:0,minWidth:65,textAlign:"right"}}>
-                  {entry.owned}/{entry.total} <span style={{color:entry.pct===100?"#22c55e":entry.pct>50?"#8b6cd8":"#4a4a70"}}>{entry.pct}%</span>
-                </div>
+                <div style={{fontSize:".72rem",color:"#6b6b90",fontVariantNumeric:"tabular-nums",flexShrink:0,minWidth:65,textAlign:"right"}}>{entry.owned}/{entry.total} <span style={{color:entry.pct===100?"#22c55e":entry.pct>50?"#8b6cd8":"#4a4a70"}}>{entry.pct}%</span></div>
                 <div style={{fontSize:".65rem",color:"#2a2a40",flexShrink:0}}>→</div>
               </div>
             ))}
           </div>
         </section>
 
-        {/* Secondary */}
         {secStats.length>0&&(
           <section style={{marginBottom:"1.5rem"}}>
             <h3 style={{fontSize:".62rem",letterSpacing:".14em",color:"#6b6b90",fontWeight:700,marginBottom:".75rem",paddingBottom:".5rem",borderBottom:"1px solid #1e1e35"}}>SECONDARY & SPECIAL</h3>
             <div style={{display:"flex",flexDirection:"column",gap:"2px"}}>
               {secStats.map(entry=>(
-                <div key={entry.name} className="artist-row" onClick={()=>onGoBinder(toSlug(entry.name))}
-                  style={{display:"flex",alignItems:"center",gap:".75rem",padding:".5rem .75rem"}}>
-                  <div style={{width:145,flexShrink:0}}>
-                    <span style={{fontSize:".8rem",color:entry.pct===100?"#22c55e":"#8888a8"}}>{entry.name}{entry.pct===100?" ✓":""}</span>
-                  </div>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{height:3,background:"#1e1e35",borderRadius:2,overflow:"hidden"}}>
-                      <div className="prog-fill" style={{width:`${entry.pct}%`,height:"100%",borderRadius:2,background:entry.pct===100?"#22c55e":"#4a3880"}}/>
-                    </div>
-                  </div>
+                <div key={entry.name} className="artist-row" onClick={()=>onGoBinder(toSlug(entry.name))} style={{display:"flex",alignItems:"center",gap:".75rem",padding:".5rem .75rem"}}>
+                  <div style={{width:145,flexShrink:0}}><span style={{fontSize:".8rem",color:entry.pct===100?"#22c55e":"#8888a8"}}>{entry.name}{entry.pct===100?" ✓":""}</span></div>
+                  <div style={{flex:1,minWidth:0}}><div style={{height:3,background:"#1e1e35",borderRadius:2,overflow:"hidden"}}><div className="prog-fill" style={{width:`${entry.pct}%`,height:"100%",borderRadius:2,background:entry.pct===100?"#22c55e":"#4a3880"}}/></div></div>
                   <div style={{fontSize:".68rem",color:"#3a3a60",fontVariantNumeric:"tabular-nums",flexShrink:0,minWidth:50,textAlign:"right"}}>{entry.owned}/{entry.total}</div>
                   <div style={{fontSize:".65rem",color:"#1e1e30",flexShrink:0}}>→</div>
                 </div>
@@ -472,12 +457,8 @@ function Dashboard({cardData,checkOwned,favorites,user,onGoBinder,onUploadCSV,cs
         )}
 
         <div style={{textAlign:"center",padding:"1.5rem 0 3rem"}}>
-          <button onClick={()=>onGoBinder("binder")} style={{background:"linear-gradient(135deg,#ff5500,#ff2200)",color:"white",border:"none",borderRadius:50,padding:".85rem 2.5rem",fontSize:".95rem",fontWeight:800,cursor:"pointer",letterSpacing:".08em",boxShadow:"0 0 30px rgba(255,60,0,0.35)"}}>
-            OPEN FULL BINDER →
-          </button>
-          <div style={{marginTop:"2rem",fontSize:".6rem",letterSpacing:".14em",color:"#2a1408"}}>
-            Komiya · Morii · Kanda · Nishida
-          </div>
+          <button onClick={()=>onGoBinder("binder")} style={{background:"linear-gradient(135deg,#ff5500,#ff2200)",color:"white",border:"none",borderRadius:50,padding:".85rem 2.5rem",fontSize:".95rem",fontWeight:800,cursor:"pointer",letterSpacing:".08em",boxShadow:"0 0 30px rgba(255,60,0,0.35)"}}>OPEN FULL BINDER →</button>
+          <div style={{marginTop:"2rem",fontSize:".6rem",letterSpacing:".14em",color:"#2a1408"}}>Komiya · Morii · Kanda · Nishida</div>
         </div>
       </div>
     </div>
@@ -486,16 +467,12 @@ function Dashboard({cardData,checkOwned,favorites,user,onGoBinder,onUploadCSV,cs
 
 // ── CARD TILE ──────────────────────────────────────────────────────────────────
 const CardTile=React.memo(function CardTile({card,owned,manualOwned,manualMissing,isFavorite,onCardClick,onToggleFavorite}){
-  const isManualOwned  =manualOwned.has(card.id);
-  const isManualMissing=manualMissing.has(card.id);
-  const badge=isManualOwned?{color:"#60a5fa",label:"M"}:isManualMissing?{color:"#f87171",label:"✕"}:owned?{color:"#22c55e",label:"✓"}:null;
+  const badge=owned?{color:"#22c55e",label:"✓"}:null;
+  const sm=imgSmall(card);
   return(
     <div className={`card-tile ${owned?"owned":"missing"}`}>
       <div onClick={()=>onCardClick(card)} style={{display:"block"}}>
-        {card.images&&card.images.small
-          ?<img src={card.images.small} alt={card.name} loading="lazy" decoding="async"/>
-          :<div className="card-blank"><span>{card.name}</span></div>
-        }
+        {sm?<img src={sm} alt={card.name} loading="lazy" decoding="async"/>:<div className="card-blank"><span>{card.name}</span></div>}
       </div>
       {badge&&<div style={{position:"absolute",top:3,right:3,background:badge.color,borderRadius:"50%",width:14,height:14,display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,color:"white",fontWeight:700,pointerEvents:"none"}}>{badge.label}</div>}
       <button className={`fav-btn ${isFavorite?"on":"off"}`} onClick={e=>{e.stopPropagation();onToggleFavorite(card.id);}}>★</button>
@@ -535,42 +512,40 @@ function PriceChart({history}){
 // ── CARD MODAL ─────────────────────────────────────────────────────────────────
 function CardModal({card,owned,manualOwned,manualMissing,isFavorite,priceHistory,onToggleManual,onToggleFavorite,onRecordPrice,onClose}){
   const price=getBestPrice(card);
-  const allVariants=card&&card.tcgplayer&&card.tcgplayer.prices?card.tcgplayer.prices:{};
+  const allVariants=card&&card.pricing&&card.pricing.tcgplayer?card.pricing.tcgplayer:{};
   const isManualOwned  =manualOwned.has(card.id);
   const isManualMissing=manualMissing.has(card.id);
   const cardHistory=priceHistory[card.id]||[];
   const overrideStatus=isManualOwned?"manual-owned":isManualMissing?"manual-missing":"auto";
-  const ebayQ=encodeURIComponent(`${card.name} ${card.number||""} ${(card.set?.name||"").replace(/&/g,"and")} pokemon card near mint`);
+  const ebayQ=encodeURIComponent(`${card.name} ${card.localId||""} ${(card.set?.name||"").replace(/&/g,"and")} pokemon card near mint`);
   const ebayUrl=`https://www.ebay.com/sch/i.html?_nkw=${ebayQ}&LH_Complete=1&LH_Sold=1`;
+  const tcgplayerUrl=`https://www.tcgplayer.com/search/pokemon/product?productLineName=pokemon&q=${encodeURIComponent(card.name+" "+(card.set?.name||""))}`;
+  const lg=imgLarge(card);
 
   useEffect(()=>{if(!card||!price)return;const td=todayStr();if(!cardHistory.find(h=>h.date===td))onRecordPrice(card.id,price.amount,td);},[card&&card.id]);
   useEffect(()=>{const fn=e=>{if(e.key==="Escape")onClose();};window.addEventListener("keydown",fn);return()=>window.removeEventListener("keydown",fn);},[onClose]);
   useEffect(()=>{document.body.style.overflow="hidden";return()=>{document.body.style.overflow="";};},[]);
   if(!card)return null;
 
+  const variantEntries=Object.entries(allVariants).filter(([k,v])=>k!=="updated"&&k!=="unit"&&v&&v.marketPrice!=null);
+
   return(
     <div className="modal-bg" onClick={onClose} style={{position:"fixed",inset:0,zIndex:200,background:"rgba(7,7,15,0.88)",display:"flex",alignItems:"center",justifyContent:"center",padding:"1rem"}}>
       <div className="fade-up" onClick={e=>e.stopPropagation()} style={{background:"#141425",border:"1px solid #1e1e35",borderRadius:16,maxWidth:460,width:"100%",maxHeight:"90dvh",overflowY:"auto",padding:"1.25rem"}}>
-        {/* Header row */}
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"1rem"}}>
           <div style={{flex:1,minWidth:0}}>
             <div style={{display:"flex",alignItems:"center",gap:".5rem"}}>
               <h2 style={{fontWeight:700,fontSize:"1.05rem",color:"#e8e8f4"}}>{card.name}</h2>
-              {/* Inline favorite toggle */}
-              <button onClick={()=>onToggleFavorite(card.id)} style={{background:isFavorite?"rgba(255,200,30,0.15)":"rgba(255,255,255,0.05)",border:`1px solid ${isFavorite?"rgba(255,200,30,0.4)":"#1e1e35"}`,borderRadius:6,padding:"2px 7px",cursor:"pointer",fontSize:".75rem",color:isFavorite?"#E8C030":"#4a4a70",flexShrink:0}}>
-                {isFavorite?"★ Wanted":"☆ Want"}
-              </button>
+              <button onClick={()=>onToggleFavorite(card.id)} style={{background:isFavorite?"rgba(255,200,30,0.15)":"rgba(255,255,255,0.05)",border:`1px solid ${isFavorite?"rgba(255,200,30,0.4)":"#1e1e35"}`,borderRadius:6,padding:"2px 7px",cursor:"pointer",fontSize:".75rem",color:isFavorite?"#E8C030":"#4a4a70",flexShrink:0}}>{isFavorite?"★ Wanted":"☆ Want"}</button>
             </div>
-            <div style={{fontSize:".7rem",color:"#6b6b90",marginTop:2}}>{card.set&&card.set.name} · #{card.number} · {card.rarity}</div>
+            <div style={{fontSize:".7rem",color:"#6b6b90",marginTop:2}}>{card.set&&card.set.name} · #{card.localId} · {card.rarity}</div>
           </div>
           <button onClick={onClose} style={{background:"none",border:"none",color:"#6b6b90",cursor:"pointer",padding:4,display:"flex",flexShrink:0}}><IcoX/></button>
         </div>
 
         <div style={{display:"flex",gap:"1rem",marginBottom:"1.25rem"}}>
           <div style={{flexShrink:0,width:128}}>
-            {card.images&&card.images.large
-              ?<img src={card.images.large} alt={card.name} style={{width:"100%",borderRadius:8,filter:owned?"none":"grayscale(1) brightness(0.45)"}}/>
-              :<div style={{width:"100%",paddingBottom:"139%",background:"#0f0f1c",borderRadius:8}}/>}
+            {lg?<img src={lg} alt={card.name} style={{width:"100%",borderRadius:8,filter:owned?"none":"grayscale(1) brightness(0.45)"}}/>:<div style={{width:"100%",paddingBottom:"139%",background:"#0f0f1c",borderRadius:8}}/>}
           </div>
           <div style={{flex:1,minWidth:0}}>
             <div style={{marginBottom:".75rem"}}>
@@ -581,7 +556,7 @@ function CardModal({card,owned,manualOwned,manualMissing,isFavorite,priceHistory
               {isManualMissing&&<span style={{marginLeft:6,fontSize:".65rem",color:"#f87171",background:"rgba(248,113,113,0.12)",padding:"1px 6px",borderRadius:4}}>✏ Override</span>}
             </div>
             <div style={{fontSize:".68rem",color:"#6b6b90"}}>Artist</div>
-            <div style={{fontSize:".85rem",color:"#e8e8f4",marginBottom:".75rem",fontWeight:500}}>{card.artist}</div>
+            <div style={{fontSize:".85rem",color:"#e8e8f4",marginBottom:".75rem",fontWeight:500}}>{card.illustrator}</div>
             {price?(
               <div>
                 <div style={{fontSize:".68rem",color:"#6b6b90"}}>TCGPlayer Market</div>
@@ -596,7 +571,6 @@ function CardModal({card,owned,manualOwned,manualMissing,isFavorite,priceHistory
           </div>
         </div>
 
-        {/* Manual override */}
         <div style={{marginBottom:"1rem",padding:".7rem",background:"#0f0f1c",borderRadius:10,border:"1px solid #1e1e35"}}>
           <div style={{fontSize:".65rem",color:"#6b6b90",marginBottom:".45rem",display:"flex",alignItems:"center",gap:4}}><IcoEdit/> Manual Override</div>
           <div style={{display:"flex",gap:".4rem"}}>
@@ -606,11 +580,11 @@ function CardModal({card,owned,manualOwned,manualMissing,isFavorite,priceHistory
           </div>
         </div>
 
-        {Object.keys(allVariants).length>1&&(
+        {variantEntries.length>1&&(
           <div style={{marginBottom:"1rem"}}>
             <div style={{fontSize:".68rem",color:"#6b6b90",marginBottom:".4rem"}}>All Variants</div>
             <div style={{display:"flex",flexWrap:"wrap",gap:".4rem"}}>
-              {Object.entries(allVariants).map(([k,v])=>v&&v.market!=null&&<div key={k} style={{background:"#0f0f1c",border:"1px solid #1e1e35",borderRadius:6,padding:"3px 8px",fontSize:".67rem"}}><span style={{color:"#6b6b90"}}>{k.replace(/([A-Z])/g," $1").trim()}: </span><span style={{color:"#e8e8f4",fontWeight:600}}>{fmt$(v.market)}</span></div>)}
+              {variantEntries.map(([k,v])=><div key={k} style={{background:"#0f0f1c",border:"1px solid #1e1e35",borderRadius:6,padding:"3px 8px",fontSize:".67rem"}}><span style={{color:"#6b6b90"}}>{k.replace(/-/g," ")}: </span><span style={{color:"#e8e8f4",fontWeight:600}}>{fmt$(v.marketPrice)}</span></div>)}
             </div>
           </div>
         )}
@@ -621,7 +595,7 @@ function CardModal({card,owned,manualOwned,manualMissing,isFavorite,priceHistory
         </div>
 
         <div style={{display:"flex",gap:".5rem"}}>
-          {card.tcgplayer?.url&&<a href={card.tcgplayer.url} target="_blank" rel="noopener noreferrer" style={{flex:1,display:"block",textAlign:"center",background:"#1a1430",color:"#9b7fe8",padding:".5rem",borderRadius:8,textDecoration:"none",fontSize:".75rem",border:"1px solid #2e2255",fontWeight:500}}>TCGPlayer →</a>}
+          <a href={tcgplayerUrl} target="_blank" rel="noopener noreferrer" style={{flex:1,display:"block",textAlign:"center",background:"#1a1430",color:"#9b7fe8",padding:".5rem",borderRadius:8,textDecoration:"none",fontSize:".75rem",border:"1px solid #2e2255",fontWeight:500}}>TCGPlayer →</a>
           <a href={ebayUrl} target="_blank" rel="noopener noreferrer" style={{flex:1,display:"block",textAlign:"center",background:"#1a1810",color:"#c8a020",padding:".5rem",borderRadius:8,textDecoration:"none",fontSize:".75rem",border:"1px solid #3a3010",fontWeight:500}}>eBay Sold →</a>
         </div>
       </div>
@@ -649,9 +623,7 @@ function ArtistSection({entry,cards,checkOwned,manualOwned,manualMissing,favorit
             <span style={{fontSize:".73rem",color:"#6b6b90",fontVariantNumeric:"tabular-nums"}}>{ownedCount} / {cards.length}</span>
             {isSecondary&&<span style={{fontSize:".6rem",color:"#3a3a5a",background:"#141425",border:"1px solid #1e1e35",padding:"0px 5px",borderRadius:3}}>secondary</span>}
           </div>
-          <div style={{marginTop:".3rem",height:2,background:"#1e1e35",borderRadius:1,maxWidth:180,overflow:"hidden"}}>
-            <div className="prog-fill" style={{width:`${pct}%`,height:"100%",borderRadius:1,background:complete?"#22c55e":"#8b6cd8"}}/>
-          </div>
+          <div style={{marginTop:".3rem",height:2,background:"#1e1e35",borderRadius:1,maxWidth:180,overflow:"hidden"}}><div className="prog-fill" style={{width:`${pct}%`,height:"100%",borderRadius:1,background:complete?"#22c55e":"#8b6cd8"}}/></div>
         </div>
       </div>
       {open&&(
@@ -665,27 +637,19 @@ function ArtistSection({entry,cards,checkOwned,manualOwned,manualMissing,favorit
 
 // ── SETTINGS ───────────────────────────────────────────────────────────────────
 function SettingsPanel({onClose,onClearCache,onClearManual,onSignOut}){
-  const[key,setKey]=useState(()=>lsGet("pb2_api_key")||"");
-  const save=()=>{lsSet("pb2_api_key",key.trim());onClose();};
   useEffect(()=>{const fn=e=>{if(e.key==="Escape")onClose();};window.addEventListener("keydown",fn);return()=>window.removeEventListener("keydown",fn);},[onClose]);
   const btn={width:"100%",borderRadius:8,padding:".45rem",cursor:"pointer",fontSize:".78rem",border:"none"};
   return(
     <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:300,background:"rgba(7,7,15,0.8)",backdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",padding:"1rem"}}>
       <div className="fade-up" onClick={e=>e.stopPropagation()} style={{background:"#141425",border:"1px solid #1e1e35",borderRadius:16,padding:"1.5rem",maxWidth:380,width:"100%"}}>
         <h3 style={{fontWeight:700,fontSize:"1rem",color:"#e8e8f4",marginBottom:"1.25rem"}}>Settings</h3>
-        <label style={{display:"block",fontSize:".75rem",color:"#6b6b90",marginBottom:".4rem"}}>pokemontcg.io API Key <span style={{color:"#3a3a5a"}}>(optional)</span></label>
-        <input type="password" value={key} onChange={e=>setKey(e.target.value)} placeholder="Increases rate limits"
-          style={{width:"100%",background:"#0f0f1c",border:"1px solid #1e1e35",borderRadius:8,color:"#e8e8f4",padding:".5rem .75rem",fontSize:".85rem",marginBottom:".5rem"}}/>
-        <a href="https://dev.pokemontcg.io/" target="_blank" rel="noopener" style={{display:"block",fontSize:".72rem",color:"#8b6cd8",marginBottom:"1.25rem"}}>Get a free API key →</a>
-        <div style={{display:"flex",gap:".5rem",marginBottom:"1.5rem"}}>
-          <button onClick={save} style={{flex:1,background:"#8b6cd8",color:"white",border:"none",borderRadius:8,padding:".55rem",cursor:"pointer",fontWeight:600,fontSize:".875rem"}}>Save</button>
-          <button onClick={onClose} style={{flex:1,background:"#1e1e35",color:"#e8e8f4",border:"none",borderRadius:8,padding:".55rem",cursor:"pointer",fontSize:".875rem"}}>Cancel</button>
-        </div>
-        <div style={{borderTop:"1px solid #1e1e35",paddingTop:"1rem",display:"flex",flexDirection:"column",gap:".5rem"}}>
-          <button onClick={()=>{if(window.confirm("Clear card cache?"))onClearCache();onClose();}} style={{...btn,background:"#200f18",color:"#f87171"}}>Clear card cache</button>
+        <p style={{fontSize:".72rem",color:"#4a4a70",marginBottom:"1rem",lineHeight:1.5}}>Card data is sourced from TCGdex (free, open-source, actively maintained) and cached locally for 24 hours.</p>
+        <div style={{display:"flex",flexDirection:"column",gap:".5rem"}}>
+          <button onClick={()=>{if(window.confirm("Clear card cache? Will re-fetch from TCGdex on next load."))onClearCache();onClose();}} style={{...btn,background:"#200f18",color:"#f87171"}}>Clear card cache</button>
           <button onClick={()=>{if(window.confirm("Reset all manual overrides?"))onClearManual();onClose();}} style={{...btn,background:"#0f1a20",color:"#60a5fa"}}>Reset all manual overrides</button>
           <button onClick={()=>{onSignOut();onClose();}} style={{...btn,background:"#1a1020",color:"#c084fc"}}>Sign out</button>
         </div>
+        <button onClick={onClose} style={{width:"100%",marginTop:"1rem",background:"#1e1e35",color:"#e8e8f4",border:"none",borderRadius:8,padding:".55rem",cursor:"pointer",fontSize:".875rem"}}>Close</button>
       </div>
     </div>
   );
@@ -711,7 +675,6 @@ function App(){
   const[csvStatus,     setCsvStatus]    =useState(null);
   const[syncStatus,    setSyncStatus]   =useState("idle");
   const fileRef=useRef(null),searchRef=useRef(null);
-  const getApiKey=()=>lsGet("pb2_api_key")||"";
 
   const withSync=async fn=>{setSyncStatus("syncing");try{await fn();setSyncStatus("synced");setTimeout(()=>setSyncStatus("idle"),2000);}catch(e){console.error(e);setSyncStatus("error");setTimeout(()=>setSyncStatus("idle"),3000);}};
 
@@ -739,7 +702,7 @@ function App(){
   const loadEntry=useCallback(async entry=>{
     const slug=toSlug(entry.name);
     setLoadingSet(s=>new Set([...s,slug]));setErrors(e=>{const n={...e};delete n[slug];return n;});
-    try{const cards=await fetchArtistCards(entry,getApiKey());setCardData(d=>({...d,[slug]:cards}));}
+    try{const cards=await fetchArtistCards(entry);setCardData(d=>({...d,[slug]:cards}));}
     catch(err){setErrors(e=>({...e,[slug]:err.message}));}
     finally{setLoadingSet(s=>{const n=new Set(s);n.delete(slug);return n;});}
   },[]);
@@ -775,7 +738,7 @@ function App(){
     setPriceHistory(prev=>{const n={...prev};if(!n[cardId])n[cardId]=[];if(!n[cardId].find(h=>h.date===date)){n[cardId]=[...n[cardId],{date,price}].slice(-180);if(user)savePricePoint(user.id,cardId,price,date).catch(console.error);}return n;});
   },[user]);
 
-  const clearCache=()=>{ARTISTS.forEach(e=>lsDel(`pb2_cards_${toSlug(e.name)}`));setCardData({});setErrors({});ARTISTS.forEach(loadEntry);};
+  const clearCache=()=>{ARTISTS.forEach(e=>lsDel(`pb3_cards_${toSlug(e.name)}`));setCardData({});setErrors({});ARTISTS.forEach(loadEntry);};
   const clearManual=async()=>{setManualOwned(new Set());setManualMissing(new Set());if(user)withSync(async()=>{await sb.from("card_overrides").delete().eq("user_id",user.id);});};
 
   const checkOwned=useCallback(card=>isCardOwned(card,ownedKeySet,manualOwned,manualMissing),[ownedKeySet,manualOwned,manualMissing]);
@@ -788,7 +751,6 @@ function App(){
     setView(target);
   },[]);
 
-  // ── Non-binder views ──
   if(view==="checking-auth")return<div style={{position:"fixed",inset:0,background:"#030100",display:"flex",alignItems:"center",justifyContent:"center"}}><IcoSpin/></div>;
 
   if(view==="loading-data")return(
@@ -808,7 +770,6 @@ function App(){
     </>
   );
 
-  // ── Binder ──
   const visibleArtists=filterSlug==="all"?ARTISTS:ARTISTS.filter(a=>toSlug(a.name)===filterSlug);
   const totalCards=Object.values(cardData).reduce((s,a)=>s+a.length,0);
   const totalOwned=Object.values(cardData).reduce((s,cards)=>s+cards.filter(checkOwned).length,0);
@@ -834,9 +795,7 @@ function App(){
             <div style={{display:"flex",gap:".4rem",alignItems:"center"}}>
               {csvStatus==="loading"&&<span style={{fontSize:".7rem",color:"#6b6b90",display:"flex",alignItems:"center",gap:4}}><IcoSpin/>Reading…</span>}
               {csvStatus?.count&&<span style={{fontSize:".7rem",color:"#22c55e"}}>✓ {csvStatus.count}</span>}
-              <button onClick={()=>fileRef.current&&fileRef.current.click()} style={{display:"flex",alignItems:"center",gap:".35rem",background:"#1e1e35",color:"#8b6cd8",border:"1px solid #2a2a50",borderRadius:8,padding:".38rem .65rem",cursor:"pointer",fontSize:".75rem",fontWeight:600}}>
-                <IcoUpload/> Upload CSV
-              </button>
+              <button onClick={()=>fileRef.current&&fileRef.current.click()} style={{display:"flex",alignItems:"center",gap:".35rem",background:"#1e1e35",color:"#8b6cd8",border:"1px solid #2a2a50",borderRadius:8,padding:".38rem .65rem",cursor:"pointer",fontSize:".75rem",fontWeight:600}}><IcoUpload/> Upload CSV</button>
               <button onClick={()=>setShowSettings(true)} style={{background:"#1e1e35",color:"#6b6b90",border:"1px solid #2a2a50",borderRadius:8,padding:".38rem",cursor:"pointer",display:"flex"}}><IcoGear/></button>
               <input ref={fileRef} type="file" accept=".csv" onChange={e=>{const f=e.target.files&&e.target.files[0];if(f)handleCSV(f);e.target.value="";}} style={{display:"none"}}/>
             </div>
@@ -879,9 +838,7 @@ function App(){
         {search&&!visibleArtists.some(entry=>{const cards=cardData[toSlug(entry.name)]||[];const q=search.toLowerCase();return cards.some(c=>c.name.toLowerCase().includes(q));})&&(
           <div style={{textAlign:"center",padding:"3rem 1rem",color:"#6b6b90",fontSize:".875rem"}}>No cards matching "{search}"</div>
         )}
-        <div style={{marginTop:"3rem",paddingTop:"1rem",borderTop:"1px solid #1e1e35",fontSize:".62rem",color:"#2a2a3a",textAlign:"center",letterSpacing:".1em"}}>
-          Komiya · Morii · Kanda · Nishida
-        </div>
+        <div style={{marginTop:"3rem",paddingTop:"1rem",borderTop:"1px solid #1e1e35",fontSize:".62rem",color:"#2a2a3a",textAlign:"center",letterSpacing:".1em"}}>Komiya · Morii · Kanda · Nishida</div>
       </main>
 
       {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(selectedCard.id)} priceHistory={priceHistory} onToggleManual={handleToggleManual} onToggleFavorite={handleToggleFavorite} onRecordPrice={handleRecordPrice} onClose={()=>setSelectedCard(null)}/>}
