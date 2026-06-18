@@ -11,7 +11,6 @@
 
   <script src="https://cdn.tailwindcss.com"></script>
   <script>tailwind.config={theme:{extend:{colors:{bg:'#07070f',surface:'#0f0f1c',card:'#141425',border:'#1e1e35',accent:'#8b6cd8',text:'#e8e8f4',muted:'#6b6b90',ok:'#22c55e',err:'#f87171'}}}};</script>
-
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.23.10/babel.min.js"></script>
@@ -23,7 +22,6 @@
     html,body,#root{min-height:100%;}
     body{background:#07070f;color:#e8e8f4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;-webkit-text-size-adjust:100%;overscroll-behavior:none;}
     ::-webkit-scrollbar{width:5px;} ::-webkit-scrollbar-track{background:#07070f;} ::-webkit-scrollbar-thumb{background:#2a2a45;border-radius:3px;}
-
     .card-tile{position:relative;cursor:pointer;border-radius:6px;overflow:hidden;}
     .card-tile img{display:block;width:100%;height:auto;border-radius:6px;transition:transform .15s ease,filter .15s ease;}
     .card-tile.missing img{filter:grayscale(1) brightness(0.3);}
@@ -32,7 +30,6 @@
     .card-tile.missing:hover img{filter:grayscale(0.5) brightness(0.5);}
     .card-blank{width:100%;padding-bottom:139.7%;background:#141425;border-radius:6px;position:relative;border:1px solid #1e1e35;}
     .card-blank span{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:5px;font-size:.58rem;color:#4a4a70;text-align:center;line-height:1.3;}
-
     @keyframes spin{to{transform:rotate(360deg);}}
     @keyframes fadeUp{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:translateY(0);}}
     @keyframes fadeIn{from{opacity:0;}to{opacity:1;}}
@@ -41,7 +38,7 @@
     @keyframes emberRise{0%{transform:translateY(0) scale(1);opacity:.9;}80%{opacity:.4;}100%{transform:translateY(-280px) scale(.1);opacity:0;}}
     @keyframes glowPulse{0%,100%{opacity:.6;}50%{opacity:1;}}
     @keyframes landingExit{from{opacity:1;transform:scale(1);}to{opacity:0;transform:scale(1.04);}}
-    @keyframes syncPop{0%{transform:scale(1);}50%{transform:scale(1.3);}100%{transform:scale(1);}}
+    @keyframes blazePop{0%{transform:scale(1);}50%{transform:scale(1.08);}100%{transform:scale(1);}}
     .spinner{animation:spin .8s linear infinite;}
     .fade-up{animation:fadeUp .2s ease forwards;}
     .fade-in{animation:fadeIn .4s ease forwards;}
@@ -51,6 +48,8 @@
     input:focus,select:focus{outline:none;border-color:#8b6cd8!important;}
     select{-webkit-appearance:none;appearance:none;cursor:pointer;}
     input[type="search"]::-webkit-search-cancel-button{display:none;}
+    .artist-row:hover{background:rgba(255,255,255,0.03);cursor:pointer;}
+    .missing-row:hover{background:rgba(255,255,255,0.03);}
   </style>
 </head>
 <body>
@@ -59,17 +58,15 @@
 /** @jsxRuntime classic */
 const {useState,useEffect,useCallback,useRef,useMemo}=React;
 
-// ── SUPABASE ─────────────────────────────────────────────────────────────────
-const SUPA_URL = "https://hbpjbefohkcnovlwvqhc.supabase.co";
-const SUPA_KEY = "sb_publishable_UM5rWTAunNLDNbIXmtL8MQ_I8yl0iIH";
-const sb = window.supabase.createClient(SUPA_URL, SUPA_KEY);
+const SUPA_URL="https://hbpjbefohkcnovlwvqhc.supabase.co";
+const SUPA_KEY="sb_publishable_UM5rWTAunNLDNbIXmtL8MQ_I8yl0iIH";
+const sb=window.supabase.createClient(SUPA_URL,SUPA_KEY);
 
-// ── CONFIG ───────────────────────────────────────────────────────────────────
-const API_BASE  = "https://api.pokemontcg.io/v2";
-const CACHE_TTL = 24*60*60*1000;
-const REDIRECT  = "https://vladimirbuslayev.github.io/fire-chicken/";
+const API_BASE="https://api.pokemontcg.io/v2";
+const CACHE_TTL=24*60*60*1000;
+const REDIRECT="https://vladimirbuslayev.github.io/fire-chicken/";
 
-const ARTISTS = [
+const ARTISTS=[
   {name:"Yuka Morii",      tier:"main",      isSet:false},
   {name:"Asoka Ito",       tier:"main",      isSet:false},
   {name:"Tomokazu Komiya", tier:"main",      isSet:false},
@@ -90,21 +87,19 @@ const ARTISTS = [
   {name:"gapao",           tier:"secondary", isSet:false},
   {name:"okubo",           tier:"secondary", isSet:false},
   {name:"fukuda",          tier:"secondary", isSet:false},
-  {name:"Pokémon GO",      tier:"special",   isSet:true, query:"set.id:pgo"},
+  {name:"Pokémon GO",      tier:"special",   isSet:true,query:"set.id:pgo"},
 ];
 
-// ── LOCAL STORAGE (card cache + api key only — user data lives in Supabase) ──
-const lsGet = k=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):null;}catch{return null;}};
-const lsSet = (k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch{}};
-const lsDel = k=>{try{localStorage.removeItem(k);}catch{}};
+const lsGet=k=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):null;}catch{return null;}};
+const lsSet=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch{}};
+const lsDel=k=>{try{localStorage.removeItem(k);}catch{}};
 
-// ── HELPERS ──────────────────────────────────────────────────────────────────
-const toSlug   = s=>s.toLowerCase().replace(/[^a-z0-9]/g,"-").replace(/-+/g,"-").replace(/^-|-$/g,"");
-const normName = s=>(s||"").toLowerCase().trim().replace(/[^a-z0-9\s]/g,"").replace(/\s+/g," ");
-const normNum  = n=>(n||"").toLowerCase().trim().replace(/\/.*$/,"").trim();
-const normSet  = s=>(s||"").toLowerCase().replace(/&/g,"and").replace(/[—–]/g," ").replace(/[^a-z0-9\s]/g,"").replace(/\bpromos?\b/g,"promo").replace(/\s+/g," ").trim();
-const fmt$     = n=>(n!=null&&!isNaN(n))?`$${Number(n).toFixed(2)}`:"—";
-const todayStr = ()=>new Date().toISOString().slice(0,10);
+const toSlug  =s=>s.toLowerCase().replace(/[^a-z0-9]/g,"-").replace(/-+/g,"-").replace(/^-|-$/g,"");
+const normName=s=>(s||"").toLowerCase().trim().replace(/[^a-z0-9\s]/g,"").replace(/\s+/g," ");
+const normNum =n=>(n||"").toLowerCase().trim().replace(/\/.*$/,"").trim();
+const normSet =s=>(s||"").toLowerCase().replace(/&/g,"and").replace(/[—–]/g," ").replace(/[^a-z0-9\s]/g,"").replace(/\bpromos?\b/g,"promo").replace(/\s+/g," ").trim();
+const fmt$    =n=>(n!=null&&!isNaN(n))?`$${Number(n).toFixed(2)}`:"—";
+const todayStr=()=>new Date().toISOString().slice(0,10);
 
 const makeKeys=(cardName,cardNumber,setName)=>{
   const n=normName(cardName);if(!n)return[];
@@ -113,13 +108,11 @@ const makeKeys=(cardName,cardNumber,setName)=>{
   const s=normSet(setName);if(s)keys.push(n+"::set::"+s);
   return keys;
 };
-
 const isCardOwned=(card,ownedKeySet,manualOwned,manualMissing)=>{
   if(manualMissing.has(card.id))return false;
   if(manualOwned.has(card.id))return true;
   return makeKeys(card.name||"",card.number||"",card.set&&card.set.name||"").some(k=>ownedKeySet.has(k));
 };
-
 const getBestPrice=card=>{
   const p=card&&card.tcgplayer&&card.tcgplayer.prices?card.tcgplayer.prices:{};
   for(const k of["holofoil","1stEditionHolofoil","unlimitedHolofoil","reverseHolofoil","normal","unlimited"])
@@ -128,7 +121,6 @@ const getBestPrice=card=>{
   if(first&&p[first]&&p[first].market!=null)return{amount:p[first].market,variant:first,prices:p[first]};
   return null;
 };
-
 const sortCards=(arr,sortBy,checkOwned)=>{
   if(!arr||!arr.length)return arr;
   const a2=arr.slice();
@@ -146,7 +138,28 @@ const sortCards=(arr,sortBy,checkOwned)=>{
   }
 };
 
-// ── API (card data — still cached in localStorage, not user-specific) ─────────
+// ── SUPABASE ──────────────────────────────────────────────────────────────────
+async function loadUserData(userId){
+  const[colRes,ovRes,phRes]=await Promise.all([
+    sb.from("user_collection").select("owned_keys").eq("user_id",userId).maybeSingle(),
+    sb.from("card_overrides").select("card_id,override_type").eq("user_id",userId),
+    sb.from("price_history").select("card_id,price,recorded_date").eq("user_id",userId).order("recorded_date"),
+  ]);
+  const ownedKeys=new Set(colRes.data?.owned_keys??[]);
+  const manualOwned=new Set(),manualMissing=new Set();
+  (ovRes.data??[]).forEach(r=>r.override_type==="owned"?manualOwned.add(r.card_id):manualMissing.add(r.card_id));
+  const priceHistory={};
+  (phRes.data??[]).forEach(r=>{if(!priceHistory[r.card_id])priceHistory[r.card_id]=[];priceHistory[r.card_id].push({date:r.recorded_date,price:Number(r.price)});});
+  return{ownedKeys,manualOwned,manualMissing,priceHistory};
+}
+async function saveCollection(userId,ownedKeys){return sb.from("user_collection").upsert({user_id:userId,owned_keys:Array.from(ownedKeys),updated_at:new Date().toISOString()},{onConflict:"user_id"});}
+async function saveOverride(userId,cardId,action){
+  if(action==="reset")return sb.from("card_overrides").delete().eq("user_id",userId).eq("card_id",cardId);
+  return sb.from("card_overrides").upsert({user_id:userId,card_id:cardId,override_type:action},{onConflict:"user_id,card_id"});
+}
+async function savePricePoint(userId,cardId,price,date){return sb.from("price_history").upsert({user_id:userId,card_id:cardId,price,recorded_date:date},{onConflict:"user_id,card_id,recorded_date"});}
+
+// ── API ───────────────────────────────────────────────────────────────────────
 async function apiFetch(q,apiKey){
   let all=[],page=1;
   const headers=apiKey?{"X-Api-Key":apiKey}:{};
@@ -154,9 +167,8 @@ async function apiFetch(q,apiKey){
     const res=await fetch(`${API_BASE}/cards?q=${encodeURIComponent(q)}&pageSize=250&page=${page}&orderBy=name`,{headers});
     if(!res.ok)throw new Error(`API error ${res.status}`);
     const json=await res.json();
-    const data=json.data||[],total=json.totalCount||0;
-    all=all.concat(data);
-    if(all.length>=total||!data.length)break;
+    all=all.concat(json.data||[]);
+    if(all.length>=(json.totalCount||0)||!(json.data||[]).length)break;
     page++;
   }
   return all;
@@ -171,37 +183,6 @@ async function fetchArtistCards(entry,apiKey){
   return cards;
 }
 
-// ── SUPABASE DATA HELPERS ─────────────────────────────────────────────────────
-async function loadUserData(userId){
-  const[colRes,ovRes,phRes]=await Promise.all([
-    sb.from("user_collection").select("owned_keys").eq("user_id",userId).maybeSingle(),
-    sb.from("card_overrides").select("card_id,override_type").eq("user_id",userId),
-    sb.from("price_history").select("card_id,price,recorded_date").eq("user_id",userId).order("recorded_date"),
-  ]);
-  const ownedKeys=new Set(colRes.data?.owned_keys??[]);
-  const manualOwned=new Set(),manualMissing=new Set();
-  (ovRes.data??[]).forEach(r=>{r.override_type==="owned"?manualOwned.add(r.card_id):manualMissing.add(r.card_id);});
-  const priceHistory={};
-  (phRes.data??[]).forEach(r=>{
-    if(!priceHistory[r.card_id])priceHistory[r.card_id]=[];
-    priceHistory[r.card_id].push({date:r.recorded_date,price:Number(r.price)});
-  });
-  return{ownedKeys,manualOwned,manualMissing,priceHistory};
-}
-
-async function saveCollection(userId,ownedKeys){
-  return sb.from("user_collection").upsert({user_id:userId,owned_keys:Array.from(ownedKeys),updated_at:new Date().toISOString()},{onConflict:"user_id"});
-}
-
-async function saveOverride(userId,cardId,action){
-  if(action==="reset")return sb.from("card_overrides").delete().eq("user_id",userId).eq("card_id",cardId);
-  return sb.from("card_overrides").upsert({user_id:userId,card_id:cardId,override_type:action},{onConflict:"user_id,card_id"});
-}
-
-async function savePricePoint(userId,cardId,price,date){
-  return sb.from("price_history").upsert({user_id:userId,card_id:cardId,price,recorded_date:date},{onConflict:"user_id,card_id,recorded_date"});
-}
-
 // ── ICONS ─────────────────────────────────────────────────────────────────────
 const Ico=({children,size})=><svg width={size||16} height={size||16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{children}</svg>;
 const IcoSearch=()=><Ico><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></Ico>;
@@ -211,11 +192,41 @@ const IcoGear =()=><Ico><circle cx="12" cy="12" r="3"/><path d="M12 2v2M12 20v2M
 const IcoCheck=()=><Ico><polyline points="20 6 9 17 4 12"/></Ico>;
 const IcoRetry=()=><Ico><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.51"/></Ico>;
 const IcoEdit =()=><Ico><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></Ico>;
-const IcoCloud=()=><Ico><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></Ico>;
 const IcoSpin =()=><svg className="spinner" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 2a10 10 0 0 1 0 20A10 10 0 0 1 12 2" strokeOpacity="0.2"/><path d="M12 2a10 10 0 0 1 10 10"/></svg>;
 const IcoChev =({open})=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" style={{transform:open?"rotate(0deg)":"rotate(-90deg)",transition:"transform .2s ease",flexShrink:0}}><polyline points="6 9 12 15 18 9"/></svg>;
+const IcoEbay =()=><Ico size={14}><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/></Ico>;
 
-// ── FLAME BACKGROUND (shared by landing + loading screens) ───────────────────
+// ── BLAZIKEN LOGO SVG ─────────────────────────────────────────────────────────
+// Inspired by the flat minimalist side-profile style (image 2)
+function BlazLogo({size=32,glow=false}){
+  return(
+    <svg width={size} height={size} viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg"
+      style={{display:"block",filter:glow?"drop-shadow(0 0 12px rgba(220,72,64,0.8))":"none"}}>
+      {/* Left long diagonal spike (the tall crest going upper-left) */}
+      <polygon points="48,80 56,66 14,6" fill="#DC4840"/>
+      {/* Right upward spike */}
+      <polygon points="66,60 82,62 105,10" fill="#DC4840"/>
+      {/* Main face body connecting both spike bases */}
+      <polygon points="56,66 66,60 82,62 86,80 82,98 68,106 53,104 42,94 44,80" fill="#DC4840"/>
+      {/* Left hackle feather 1 */}
+      <polygon points="44,80 26,74 38,88" fill="#DC4840"/>
+      {/* Left hackle feather 2 */}
+      <polygon points="38,88 22,86 33,97" fill="#DC4840"/>
+      {/* Left hackle feather 3 */}
+      <polygon points="33,97 19,98 31,106" fill="#DC4840"/>
+      {/* Snout/beak pointing lower right */}
+      <polygon points="82,98 68,106 88,112" fill="#DC4840"/>
+      {/* Eye — golden sclera */}
+      <ellipse cx="65" cy="85" rx="16" ry="11" fill="#E8BE30"/>
+      {/* Eye — blue iris lower portion */}
+      <ellipse cx="70" cy="90" rx="11" ry="8" fill="#4A88C8"/>
+      {/* Eye — grey pupil */}
+      <circle cx="70" cy="88" r="5.5" fill="#707480"/>
+    </svg>
+  );
+}
+
+// ── FLAME BACKGROUND ──────────────────────────────────────────────────────────
 const FLAME_DEFS=[
   {left:"8%", w:70, h:260,blur:14,delay:0,  dur:2.1,anim:"flameFlicker"},
   {left:"18%",w:45, h:180,blur:10,delay:.4, dur:1.7,anim:"flameFlicker2"},
@@ -229,26 +240,24 @@ const FLAME_DEFS=[
 const EMBER_DEFS=Array.from({length:22},(_,i)=>({left:(5+i*4.2+Math.sin(i*1.3)*8)%95+"%",size:3+(i%4),delay:(i*.37)%4,dur:2.2+(i%3)*.8}));
 
 function FlameBackground({dim}){
-  return(
-    <>
-      <div style={{position:"absolute",bottom:0,left:0,right:0,height:"65%",overflow:"hidden",opacity:dim?.5:1}}>
-        {FLAME_DEFS.map((f,i)=>(
-          <div key={i} style={{position:"absolute",bottom:0,left:f.left,marginLeft:-f.w/2,width:f.w,height:f.h,
-            background:"linear-gradient(to top,#ff2200 0%,#ff6600 40%,#ffaa00 70%,#ffe066 90%,transparent 100%)",
-            borderRadius:"50% 50% 25% 25% / 55% 55% 45% 45%",filter:`blur(${f.blur}px)`,
-            transformOrigin:"bottom center",animation:`${f.anim} ${f.dur}s ${f.delay}s ease-in-out infinite`,opacity:.88}}/>
-        ))}
-      </div>
-      <div style={{position:"absolute",inset:0,overflow:"hidden",pointerEvents:"none",opacity:dim?.4:1}}>
-        {EMBER_DEFS.map((e,i)=>(
-          <div key={i} style={{position:"absolute",bottom:"15%",left:e.left,width:e.size,height:e.size,borderRadius:"50%",
-            background:"#ff9900",boxShadow:`0 0 ${e.size*2}px #ff4400`,
-            animation:`emberRise ${e.dur}s ${e.delay}s ease-out infinite`,opacity:0}}/>
-        ))}
-      </div>
-      <div style={{position:"absolute",bottom:0,left:0,right:0,height:120,background:"linear-gradient(to top,rgba(255,60,0,0.35),transparent)",animation:"glowPulse 2.5s ease-in-out infinite",opacity:dim?.5:1}}/>
-    </>
-  );
+  return(<>
+    <div style={{position:"absolute",bottom:0,left:0,right:0,height:"65%",overflow:"hidden",opacity:dim?.5:1}}>
+      {FLAME_DEFS.map((f,i)=>(
+        <div key={i} style={{position:"absolute",bottom:0,left:f.left,marginLeft:-f.w/2,width:f.w,height:f.h,
+          background:"linear-gradient(to top,#ff2200 0%,#ff6600 40%,#ffaa00 70%,#ffe066 90%,transparent 100%)",
+          borderRadius:"50% 50% 25% 25% / 55% 55% 45% 45%",filter:`blur(${f.blur}px)`,
+          transformOrigin:"bottom center",animation:`${f.anim} ${f.dur}s ${f.delay}s ease-in-out infinite`,opacity:.88}}/>
+      ))}
+    </div>
+    <div style={{position:"absolute",inset:0,overflow:"hidden",pointerEvents:"none",opacity:dim?.4:1}}>
+      {EMBER_DEFS.map((e,i)=>(
+        <div key={i} style={{position:"absolute",bottom:"15%",left:e.left,width:e.size,height:e.size,borderRadius:"50%",
+          background:"#ff9900",boxShadow:`0 0 ${e.size*2}px #ff4400`,
+          animation:`emberRise ${e.dur}s ${e.delay}s ease-out infinite`,opacity:0}}/>
+      ))}
+    </div>
+    <div style={{position:"absolute",bottom:0,left:0,right:0,height:120,background:"linear-gradient(to top,rgba(255,60,0,0.35),transparent)",animation:"glowPulse 2.5s ease-in-out infinite",opacity:dim?.5:1}}/>
+  </>);
 }
 
 // ── LANDING / AUTH PAGE ───────────────────────────────────────────────────────
@@ -258,15 +267,10 @@ function LandingPage({user,onEnter,onSendLink,onSignOut}){
   const[sending,setSending]=useState(false);
   const[error,setError]=useState("");
   const[exiting,setExiting]=useState(false);
-  const emailRef=useRef(null);
   const isLoggedIn=!!user;
 
   const enter=()=>{setExiting(true);setTimeout(onEnter,420);};
-
-  useEffect(()=>{
-    const fn=e=>{if(e.key==="Enter"&&isLoggedIn)enter();};
-    window.addEventListener("keydown",fn);return()=>window.removeEventListener("keydown",fn);
-  },[isLoggedIn]);
+  useEffect(()=>{const fn=e=>{if(e.key==="Enter"&&isLoggedIn)enter();};window.addEventListener("keydown",fn);return()=>window.removeEventListener("keydown",fn);},[isLoggedIn]);
 
   const send=async()=>{
     if(!email.trim())return;
@@ -276,58 +280,35 @@ function LandingPage({user,onEnter,onSendLink,onSignOut}){
     finally{setSending(false);}
   };
 
-  const cardStyle={
-    background:"rgba(7,7,15,0.75)",border:"1px solid rgba(255,100,0,0.2)",
-    borderRadius:16,padding:"1.75rem",maxWidth:360,width:"100%",
-    backdropFilter:"blur(12px)",WebkitBackdropFilter:"blur(12px)",
-  };
-  const inputStyle={
-    width:"100%",background:"rgba(255,255,255,0.06)",border:"1px solid rgba(255,100,0,0.3)",
-    borderRadius:10,color:"#fff8f0",padding:".65rem 1rem",fontSize:"1rem",
-    marginBottom:".75rem",outline:"none",
-  };
-  const btnStyle={
-    width:"100%",background:"linear-gradient(135deg,#ff5500,#ff2200)",
-    color:"#fff8f0",border:"none",borderRadius:10,padding:".75rem",
-    fontSize:"1rem",fontWeight:800,cursor:"pointer",letterSpacing:".05em",
-    boxShadow:"0 0 30px rgba(255,60,0,0.4)",
-    opacity:sending?0.7:1,transition:"opacity .15s",
-  };
+  const cardStyle={background:"rgba(7,7,15,0.75)",border:"1px solid rgba(255,100,0,0.2)",borderRadius:16,padding:"1.75rem",maxWidth:360,width:"100%",backdropFilter:"blur(12px)",WebkitBackdropFilter:"blur(12px)"};
+  const inputStyle={width:"100%",background:"rgba(255,255,255,0.06)",border:"1px solid rgba(255,100,0,0.3)",borderRadius:10,color:"#fff8f0",padding:".65rem 1rem",fontSize:"1rem",marginBottom:".75rem",outline:"none"};
 
   return(
     <div className={exiting?"landing-exit":""} onClick={isLoggedIn?enter:undefined}
       style={{position:"fixed",inset:0,zIndex:9999,cursor:isLoggedIn?"pointer":"default",
         background:"radial-gradient(ellipse at 50% 110%,#3d0f00 0%,#1a0500 40%,#080200 70%,#030100 100%)",
         display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
-
       <FlameBackground/>
-
       <div className="fade-in" style={{position:"relative",zIndex:10,textAlign:"center",padding:"1rem",width:"100%",maxWidth:400}}>
-        <div style={{fontSize:"3.5rem",marginBottom:".75rem",filter:"drop-shadow(0 0 20px rgba(255,150,0,0.8))"}}>🎴</div>
+        <div style={{display:"flex",justifyContent:"center",marginBottom:"1rem"}}>
+          <BlazLogo size={72} glow={true}/>
+        </div>
         <h1 style={{fontSize:"clamp(2.2rem,9vw,4rem)",fontWeight:900,letterSpacing:"-.03em",color:"#fff8f0",lineHeight:1,
           textShadow:"0 0 60px rgba(255,100,0,0.9),0 0 20px rgba(255,200,0,0.5)",marginBottom:".5rem"}}>
           Artist Binder
         </h1>
-
         {isLoggedIn?(
           <>
-            <p style={{fontSize:"clamp(.85rem,2.5vw,1rem)",color:"#ff9944",marginBottom:"2rem",letterSpacing:".02em",textShadow:"0 0 12px rgba(255,120,0,0.6)"}}>
-              Your collection. Your fire. 🔥
-            </p>
-            <button onClick={e=>{e.stopPropagation();enter();}} style={{
-              background:"linear-gradient(135deg,#ff5500,#ff2200)",color:"#fff8f0",border:"none",borderRadius:50,
+            <p style={{fontSize:"clamp(.85rem,2.5vw,1rem)",color:"#ff9944",marginBottom:"2rem",letterSpacing:".02em",textShadow:"0 0 12px rgba(255,120,0,0.6)"}}>Your collection. Your fire. 🔥</p>
+            <button onClick={e=>{e.stopPropagation();enter();}} style={{background:"linear-gradient(135deg,#ff5500,#ff2200)",color:"#fff8f0",border:"none",borderRadius:50,
               padding:".9rem 3rem",fontSize:"1rem",fontWeight:800,cursor:"pointer",letterSpacing:".1em",
-              boxShadow:"0 0 40px rgba(255,60,0,0.6),0 0 80px rgba(255,60,0,0.3)",
-              transition:"transform .15s ease,box-shadow .15s ease",}}
-              onMouseEnter={e=>{e.currentTarget.style.transform="scale(1.06)";}}
-              onMouseLeave={e=>{e.currentTarget.style.transform="scale(1)";}}>
+              boxShadow:"0 0 40px rgba(255,60,0,0.6),0 0 80px rgba(255,60,0,0.3)"}}
+              onMouseEnter={e=>e.currentTarget.style.transform="scale(1.06)"} onMouseLeave={e=>e.currentTarget.style.transform="scale(1)"}>
               ENTER BINDER
             </button>
             <div style={{marginTop:"1.5rem",display:"flex",alignItems:"center",justifyContent:"center",gap:".75rem"}}>
               <span style={{fontSize:".7rem",color:"#5a2a10"}}>{user.email}</span>
-              <button onClick={e=>{e.stopPropagation();onSignOut();}} style={{fontSize:".7rem",color:"#ff6633",background:"none",border:"1px solid rgba(255,100,50,0.2)",borderRadius:6,padding:"2px 8px",cursor:"pointer"}}>
-                Sign out
-              </button>
+              <button onClick={e=>{e.stopPropagation();onSignOut();}} style={{fontSize:".7rem",color:"#ff6633",background:"none",border:"1px solid rgba(255,100,50,0.2)",borderRadius:6,padding:"2px 8px",cursor:"pointer"}}>Sign out</button>
             </div>
             <p style={{marginTop:"1.5rem",fontSize:".6rem",color:"#5a2200",letterSpacing:".08em"}}>⚡ A TRIBUTE TO BLAZIKEN — THE GREATEST ⚡</p>
           </>
@@ -336,30 +317,216 @@ function LandingPage({user,onEnter,onSendLink,onSignOut}){
             <div style={{fontSize:"2rem",marginBottom:".75rem"}}>📬</div>
             <h2 style={{fontSize:"1.1rem",fontWeight:700,color:"#fff8f0",marginBottom:".5rem"}}>Check your email!</h2>
             <p style={{fontSize:".85rem",color:"#ff9944",marginBottom:"1.25rem",lineHeight:1.5}}>
-              We sent a magic link to <strong style={{color:"#fff8f0"}}>{email}</strong>.<br/>
-              Click the link to sign in — no password needed.
+              We sent a magic link to <strong style={{color:"#fff8f0"}}>{email}</strong>.<br/>Click the link to sign in.
             </p>
-            <button onClick={()=>setLinkSent(false)} style={{background:"none",border:"1px solid rgba(255,100,0,0.3)",color:"#ff9944",borderRadius:8,padding:".5rem 1rem",cursor:"pointer",fontSize:".8rem"}}>
-              Try a different email
-            </button>
+            <button onClick={()=>setLinkSent(false)} style={{background:"none",border:"1px solid rgba(255,100,0,0.3)",color:"#ff9944",borderRadius:8,padding:".5rem 1rem",cursor:"pointer",fontSize:".8rem"}}>Try a different email</button>
           </div>
         ):(
           <div onClick={e=>e.stopPropagation()} style={cardStyle}>
-            <p style={{fontSize:".85rem",color:"#ff9944",marginBottom:"1.25rem",lineHeight:1.5}}>
-              Sign in to sync your collection across all your devices.
-            </p>
-            <input ref={emailRef} type="email" placeholder="your@email.com" value={email}
-              onChange={e=>setEmail(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()}
-              style={inputStyle} autoFocus/>
+            <p style={{fontSize:".85rem",color:"#ff9944",marginBottom:"1.25rem",lineHeight:1.5}}>Sign in to sync your collection across all your devices.</p>
+            <input type="email" placeholder="your@email.com" value={email} onChange={e=>setEmail(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()} style={inputStyle} autoFocus/>
             {error&&<p style={{fontSize:".75rem",color:"#f87171",marginBottom:".5rem"}}>{error}</p>}
-            <button onClick={send} disabled={sending||!email.trim()} style={{...btnStyle,opacity:(sending||!email.trim())?0.5:1}}>
+            <button onClick={send} disabled={sending||!email.trim()} style={{width:"100%",background:"linear-gradient(135deg,#ff5500,#ff2200)",color:"#fff8f0",border:"none",borderRadius:10,padding:".75rem",fontSize:"1rem",fontWeight:800,cursor:"pointer",letterSpacing:".05em",boxShadow:"0 0 30px rgba(255,60,0,0.4)",opacity:(sending||!email.trim())?.5:1}}>
               {sending?"Sending link…":"Send Magic Link 🔥"}
             </button>
-            <p style={{marginTop:".75rem",fontSize:".68rem",color:"#5a3020",lineHeight:1.4}}>
-              No password. We'll email you a one-click sign-in link.
-            </p>
+            <p style={{marginTop:".75rem",fontSize:".68rem",color:"#5a3020",lineHeight:1.4}}>No password. We'll email you a one-click sign-in link.</p>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ── DASHBOARD ─────────────────────────────────────────────────────────────────
+function Dashboard({cardData,checkOwned,user,onGoBinder,onUploadCSV,csvStatus,syncStatus}){
+  const totalCards=useMemo(()=>Object.values(cardData).reduce((s,a)=>s+a.length,0),[cardData]);
+  const totalOwned=useMemo(()=>Object.values(cardData).reduce((s,a)=>s+a.filter(checkOwned).length,0),[cardData,checkOwned]);
+  const totalPct=totalCards?Math.round((totalOwned/totalCards)*100):0;
+
+  const collectionValue=useMemo(()=>{
+    return Object.values(cardData).reduce((sum,cards)=>
+      sum+cards.reduce((s,card)=>{if(!checkOwned(card))return s;const p=getBestPrice(card);return s+(p?p.amount:0);},0),0);
+  },[cardData,checkOwned]);
+
+  const artistStats=useMemo(()=>ARTISTS.map(entry=>{
+    const cards=cardData[toSlug(entry.name)]||[];
+    const owned=cards.filter(checkOwned).length;
+    return{...entry,cards,total:cards.length,owned,pct:cards.length?Math.round((owned/cards.length)*100):0};
+  }).filter(a=>a.total>0),[cardData,checkOwned]);
+
+  const topMissing=useMemo(()=>{
+    const m=[];
+    ARTISTS.forEach(entry=>{
+      (cardData[toSlug(entry.name)]||[]).forEach(card=>{
+        if(!checkOwned(card)){const p=getBestPrice(card);if(p&&p.amount>0)m.push({card,price:p.amount,artist:entry});}
+      });
+    });
+    return m.sort((a,b)=>b.price-a.price).slice(0,8);
+  },[cardData,checkOwned]);
+
+  const mainStats=artistStats.filter(a=>a.tier==="main");
+  const secStats =artistStats.filter(a=>a.tier==="secondary"||a.tier==="special");
+
+  const selSt={background:"#0f0f1c",border:"1px solid #1e1e35",borderRadius:8,color:"#e8e8f4",padding:".4rem .6rem",fontSize:".76rem"};
+  const syncIcon=syncStatus==="syncing"?<IcoSpin/>:syncStatus==="synced"?<span style={{color:"#22c55e",fontSize:".65rem"}}>✓</span>:null;
+
+  return(
+    <div style={{minHeight:"100dvh",background:"#07070f",paddingBottom:"4rem"}}>
+      {/* Header */}
+      <header style={{position:"sticky",top:0,zIndex:100,background:"rgba(7,7,15,0.97)",backdropFilter:"blur(18px)",borderBottom:"1px solid #1e1e35"}}>
+        <div style={{maxWidth:900,margin:"0 auto",padding:".6rem 1rem",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <div style={{display:"flex",alignItems:"center",gap:".6rem",cursor:"pointer"}} onClick={()=>onGoBinder("landing")}>
+            <BlazLogo size={28}/>
+            <span style={{fontWeight:800,fontSize:".95rem",color:"#e8e8f4",letterSpacing:"-.02em"}}>Artist Binder</span>
+          </div>
+          <div style={{display:"flex",gap:".4rem",alignItems:"center"}}>
+            {csvStatus==="loading"&&<span style={{fontSize:".7rem",color:"#6b6b90",display:"flex",alignItems:"center",gap:4}}><IcoSpin/>Reading…</span>}
+            {csvStatus?.count&&<span style={{fontSize:".7rem",color:"#22c55e"}}>✓ {csvStatus.count} cards</span>}
+            {syncIcon&&<span style={{display:"flex",alignItems:"center",gap:3,fontSize:".65rem",color:"#6b6b90"}}>{syncIcon}</span>}
+            <button onClick={onUploadCSV} style={{display:"flex",alignItems:"center",gap:".3rem",background:"#1e1e35",color:"#8b6cd8",border:"1px solid #2a2a50",borderRadius:8,padding:".35rem .6rem",cursor:"pointer",fontSize:".72rem",fontWeight:600}}>
+              <IcoUpload/> CSV
+            </button>
+            <button onClick={()=>onGoBinder("binder")} style={{background:"linear-gradient(135deg,#ff5500,#ff3300)",color:"white",border:"none",borderRadius:8,padding:".35rem .75rem",cursor:"pointer",fontSize:".72rem",fontWeight:700,letterSpacing:".03em"}}>
+              Open Binder →
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <div style={{maxWidth:900,margin:"0 auto",padding:"0 1rem"}}>
+        {/* Hero */}
+        <div style={{
+          marginTop:"1.5rem",marginBottom:"1.5rem",
+          background:"radial-gradient(ellipse at 30% 50%,rgba(220,72,64,0.12) 0%,rgba(7,7,15,0) 70%)",
+          border:"1px solid #1e1e35",borderRadius:20,padding:"2rem 1.5rem",
+          display:"flex",flexWrap:"wrap",alignItems:"center",gap:"2rem",
+        }}>
+          <div style={{display:"flex",justifyContent:"center",flexShrink:0}}>
+            <BlazLogo size={110} glow={true}/>
+          </div>
+          <div style={{flex:1,minWidth:200}}>
+            <div style={{fontSize:".65rem",letterSpacing:".15em",color:"#6b6b90",marginBottom:".3rem",fontWeight:600}}>
+              {user?.email||"YOUR COLLECTION"}
+            </div>
+            <h2 style={{fontSize:"clamp(1.5rem,5vw,2.5rem)",fontWeight:900,color:"#fff8f0",letterSpacing:"-.03em",lineHeight:1,marginBottom:"1rem",textShadow:"0 0 30px rgba(220,72,64,0.4)"}}>
+              YOUR BINDER
+            </h2>
+            {/* Big stats */}
+            <div style={{display:"flex",flexWrap:"wrap",gap:"1.5rem",marginBottom:"1.25rem"}}>
+              <div>
+                <div style={{fontSize:"clamp(1.8rem,6vw,3rem)",fontWeight:900,color:"#FF8833",letterSpacing:"-.04em",lineHeight:1}}>{totalPct}%</div>
+                <div style={{fontSize:".68rem",color:"#6b6b90",marginTop:2}}>Complete</div>
+              </div>
+              <div>
+                <div style={{fontSize:"clamp(1.8rem,6vw,3rem)",fontWeight:900,color:"#e8e8f4",letterSpacing:"-.04em",lineHeight:1}}>{totalOwned.toLocaleString()}</div>
+                <div style={{fontSize:".68rem",color:"#6b6b90",marginTop:2}}>Cards Owned</div>
+              </div>
+              {collectionValue>0&&(
+                <div>
+                  <div style={{fontSize:"clamp(1.8rem,6vw,3rem)",fontWeight:900,color:"#E8BE30",letterSpacing:"-.04em",lineHeight:1}}>{fmt$(collectionValue)}</div>
+                  <div style={{fontSize:".68rem",color:"#6b6b90",marginTop:2}}>Est. Value</div>
+                </div>
+              )}
+            </div>
+            {/* Overall progress bar */}
+            <div style={{height:6,background:"#1e1e35",borderRadius:3,overflow:"hidden",maxWidth:320}}>
+              <div className="prog-fill" style={{width:`${totalPct}%`,height:"100%",borderRadius:3,background:"linear-gradient(90deg,#ff4400,#ff8800)"}}/>
+            </div>
+          </div>
+        </div>
+
+        {/* Artist Progress — Main */}
+        <section style={{marginBottom:"1.5rem"}}>
+          <h3 style={{fontSize:".65rem",letterSpacing:".12em",color:"#6b6b90",fontWeight:700,marginBottom:".75rem",paddingBottom:".5rem",borderBottom:"1px solid #1e1e35"}}>
+            MAIN ARTISTS
+          </h3>
+          <div style={{display:"flex",flexDirection:"column",gap:"2px"}}>
+            {mainStats.map(entry=>(
+              <div key={entry.name} className="artist-row" onClick={()=>onGoBinder(toSlug(entry.name))}
+                style={{display:"flex",alignItems:"center",gap:".75rem",padding:".6rem .75rem",borderRadius:10,transition:"background .15s"}}>
+                <div style={{width:140,flexShrink:0}}>
+                  <div style={{fontSize:".875rem",fontWeight:600,color:entry.pct===100?"#22c55e":"#e8e8f4"}}>{entry.name}{entry.pct===100?" ✓":""}</div>
+                </div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{height:4,background:"#1e1e35",borderRadius:2,overflow:"hidden"}}>
+                    <div className="prog-fill" style={{width:`${entry.pct}%`,height:"100%",borderRadius:2,background:entry.pct===100?"#22c55e":"linear-gradient(90deg,#8b6cd8,#a584e0)"}}/>
+                  </div>
+                </div>
+                <div style={{fontSize:".72rem",color:"#6b6b90",fontVariantNumeric:"tabular-nums",flexShrink:0,minWidth:60,textAlign:"right"}}>
+                  {entry.owned}/{entry.total}
+                  <span style={{marginLeft:4,color:entry.pct===100?"#22c55e":entry.pct>50?"#8b6cd8":"#6b6b90"}}> {entry.pct}%</span>
+                </div>
+                <div style={{fontSize:".7rem",color:"#3a3a5a",flexShrink:0}}>→</div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* Artist Progress — Secondary */}
+        {secStats.length>0&&(
+          <section style={{marginBottom:"1.5rem"}}>
+            <h3 style={{fontSize:".65rem",letterSpacing:".12em",color:"#6b6b90",fontWeight:700,marginBottom:".75rem",paddingBottom:".5rem",borderBottom:"1px solid #1e1e35"}}>
+              SECONDARY & SPECIAL
+            </h3>
+            <div style={{display:"flex",flexDirection:"column",gap:"2px"}}>
+              {secStats.map(entry=>(
+                <div key={entry.name} className="artist-row" onClick={()=>onGoBinder(toSlug(entry.name))}
+                  style={{display:"flex",alignItems:"center",gap:".75rem",padding:".5rem .75rem",borderRadius:10,transition:"background .15s"}}>
+                  <div style={{width:140,flexShrink:0}}>
+                    <div style={{fontSize:".8rem",color:entry.pct===100?"#22c55e":"#9b9bc0"}}>{entry.name}{entry.pct===100?" ✓":""}</div>
+                  </div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{height:3,background:"#1e1e35",borderRadius:2,overflow:"hidden"}}>
+                      <div className="prog-fill" style={{width:`${entry.pct}%`,height:"100%",borderRadius:2,background:entry.pct===100?"#22c55e":"#5a4490"}}/>
+                    </div>
+                  </div>
+                  <div style={{fontSize:".68rem",color:"#4a4a70",fontVariantNumeric:"tabular-nums",flexShrink:0,minWidth:60,textAlign:"right"}}>
+                    {entry.owned}/{entry.total}
+                  </div>
+                  <div style={{fontSize:".7rem",color:"#2a2a40",flexShrink:0}}>→</div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Most Wanted */}
+        {topMissing.length>0&&(
+          <section style={{marginBottom:"1.5rem"}}>
+            <h3 style={{fontSize:".65rem",letterSpacing:".12em",color:"#6b6b90",fontWeight:700,marginBottom:".75rem",paddingBottom:".5rem",borderBottom:"1px solid #1e1e35"}}>
+              MOST WANTED — MISSING BY VALUE
+            </h3>
+            <div style={{display:"flex",flexDirection:"column",gap:"2px"}}>
+              {topMissing.map(({card,price,artist},i)=>{
+                const ebayQ=encodeURIComponent(`${card.name} ${card.number||""} ${(card.set?.name||"").replace(/&/g,"and")} pokemon card near mint`);
+                const ebayUrl=`https://www.ebay.com/sch/i.html?_nkw=${ebayQ}&LH_Complete=1&LH_Sold=1`;
+                return(
+                  <div key={card.id} className="missing-row"
+                    style={{display:"flex",alignItems:"center",gap:".75rem",padding:".6rem .75rem",borderRadius:10,transition:"background .15s"}}>
+                    <div style={{fontSize:".75rem",color:"#3a3a5a",fontWeight:700,flexShrink:0,width:18}}>{i+1}</div>
+                    {card.images?.small&&<img src={card.images.small} alt={card.name} style={{width:36,height:"auto",borderRadius:4,filter:"grayscale(0.2)",flexShrink:0}}/>}
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:".85rem",color:"#e8e8f4",fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{card.name}</div>
+                      <div style={{fontSize:".68rem",color:"#6b6b90"}}>{artist.name} · {card.set?.name}</div>
+                    </div>
+                    <div style={{fontWeight:800,color:"#E8BE30",fontSize:".9rem",flexShrink:0}}>{fmt$(price)}</div>
+                    <a href={ebayUrl} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()}
+                      style={{display:"flex",alignItems:"center",gap:3,background:"#1a1a10",color:"#c8a020",border:"1px solid #3a3010",borderRadius:6,padding:"3px 8px",textDecoration:"none",fontSize:".68rem",fontWeight:600,flexShrink:0,whiteSpace:"nowrap"}}>
+                      eBay →
+                    </a>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
+        {/* CTA */}
+        <div style={{textAlign:"center",padding:"1.5rem 0"}}>
+          <button onClick={()=>onGoBinder("binder")} style={{background:"linear-gradient(135deg,#ff5500,#ff2200)",color:"white",border:"none",borderRadius:50,padding:".9rem 2.5rem",fontSize:"1rem",fontWeight:800,cursor:"pointer",letterSpacing:".08em",boxShadow:"0 0 30px rgba(255,60,0,0.4)"}}>
+            OPEN FULL BINDER →
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -371,13 +538,13 @@ const CardTile=React.memo(function CardTile({card,owned,manualOwned,manualMissin
   const isManualMissing=manualMissing.has(card.id);
   const badgeColor=isManualOwned?"#60a5fa":isManualMissing?"#f87171":"#22c55e";
   return(
-    <div className={`card-tile ${owned?"owned":"missing"}`} onClick={()=>onClick(card)} title={`${card.name} — ${owned?"✓ Owned":"Missing"}${isManualOwned?" (manual)":""}${isManualMissing?" (force missing)":""}`}>
+    <div className={`card-tile ${owned?"owned":"missing"}`} onClick={()=>onClick(card)} title={`${card.name} — ${owned?"✓ Owned":"Missing"}`}>
       {card.images&&card.images.small
         ?<img src={card.images.small} alt={card.name} loading="lazy" decoding="async"/>
         :<div className="card-blank"><span>{card.name}</span></div>
       }
       {(owned||isManualMissing)&&<div style={{position:"absolute",top:3,right:3,background:badgeColor,borderRadius:"50%",width:14,height:14,display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,color:"white",fontWeight:700}}>{isManualMissing?"✕":"✓"}</div>}
-      {isManualOwned&&<div style={{position:"absolute",top:3,left:3,background:"rgba(96,165,250,0.9)",borderRadius:3,padding:"1px 4px",fontSize:".45rem",color:"white",fontWeight:700,letterSpacing:".05em"}}>M</div>}
+      {isManualOwned&&<div style={{position:"absolute",top:3,left:3,background:"rgba(96,165,250,0.9)",borderRadius:3,padding:"1px 4px",fontSize:".45rem",color:"white",fontWeight:700}}>M</div>}
     </div>
   );
 });
@@ -385,7 +552,7 @@ const CardTile=React.memo(function CardTile({card,owned,manualOwned,manualMissin
 // ── PRICE SPARKLINE ────────────────────────────────────────────────────────────
 function PriceChart({history}){
   const hist=(history||[]).slice(-90);
-  if(hist.length<2)return <div style={{textAlign:"center",color:"#6b6b90",fontSize:".75rem",padding:"1.25rem 0",lineHeight:1.6}}>Price history builds over time as you open cards.<br/>{hist.length===1?"1 point recorded — check back tomorrow!":"No history yet."}</div>;
+  if(hist.length<2)return<div style={{textAlign:"center",color:"#6b6b90",fontSize:".75rem",padding:"1.25rem 0",lineHeight:1.6}}>Price history builds over time as you open cards.<br/>{hist.length===1?"1 point recorded — check back tomorrow!":"No history yet."}</div>;
   const prices=hist.map(h=>h.price),dates=hist.map(h=>h.date.slice(5));
   const minP=Math.min(...prices),maxP=Math.max(...prices),range=maxP-minP||1;
   const W=340,H=80,PX=8,PY=12,W2=W-2*PX,H2=H-2*PY;
@@ -393,7 +560,7 @@ function PriceChart({history}){
   const poly=pts.map(pt=>pt[0]+","+pt[1]).join(" ");
   const last=pts[pts.length-1],first=pts[0];
   const areaD=["M "+first[0]+","+(H-PY),...pts.map(pt=>"L "+pt[0]+","+pt[1]),"L "+last[0]+","+(H-PY),"Z"].join(" ");
-  const gid="g"+hist[0].date.replace(/\D/g,"");
+  const gid="g"+(hist[0]?.date||"0").replace(/\D/g,"");
   return(
     <svg viewBox={"0 0 "+W+" "+H} style={{width:"100%",height:"auto",display:"block"}}>
       <defs><linearGradient id={gid} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#8b6cd8" stopOpacity="0.25"/><stop offset="100%" stopColor="#8b6cd8" stopOpacity="0.02"/></linearGradient></defs>
@@ -418,6 +585,11 @@ function CardModal({card,owned,manualOwned,manualMissing,priceHistory,onToggleMa
   const isManualOwned  =manualOwned.has(card.id);
   const isManualMissing=manualMissing.has(card.id);
   const cardHistory=priceHistory[card.id]||[];
+  const overrideStatus=isManualOwned?"manual-owned":isManualMissing?"manual-missing":"auto";
+
+  // eBay sold listings URL
+  const ebayQuery=`${card.name} ${card.number||""} ${(card.set?.name||"").replace(/[&]/g,"and")} pokemon card near mint`;
+  const ebayUrl=`https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(ebayQuery)}&LH_Complete=1&LH_Sold=1`;
 
   useEffect(()=>{
     if(!card||!price)return;
@@ -427,8 +599,6 @@ function CardModal({card,owned,manualOwned,manualMissing,priceHistory,onToggleMa
   useEffect(()=>{const fn=e=>{if(e.key==="Escape")onClose();};window.addEventListener("keydown",fn);return()=>window.removeEventListener("keydown",fn);},[onClose]);
   useEffect(()=>{document.body.style.overflow="hidden";return()=>{document.body.style.overflow="";};},[]);
   if(!card)return null;
-
-  const overrideStatus=isManualOwned?"manual-owned":isManualMissing?"manual-missing":"auto";
 
   return(
     <div className="modal-bg" onClick={onClose} style={{position:"fixed",inset:0,zIndex:200,background:"rgba(7,7,15,0.88)",display:"flex",alignItems:"center",justifyContent:"center",padding:"1rem"}}>
@@ -460,7 +630,7 @@ function CardModal({card,owned,manualOwned,manualMissing,priceHistory,onToggleMa
             <div style={{fontSize:".85rem",color:"#e8e8f4",marginBottom:".75rem",fontWeight:500}}>{card.artist}</div>
             {price?(
               <div>
-                <div style={{fontSize:".68rem",color:"#6b6b90"}}>Market Price</div>
+                <div style={{fontSize:".68rem",color:"#6b6b90"}}>TCGPlayer Market</div>
                 <div style={{fontSize:"1.5rem",fontWeight:800,color:"#8b6cd8",letterSpacing:"-.02em",lineHeight:1.1,marginBottom:".3rem"}}>{fmt$(price.amount)}</div>
                 <div style={{display:"flex",flexWrap:"wrap",gap:".5rem",fontSize:".68rem"}}>
                   {price.prices&&price.prices.low !=null&&<span style={{color:"#6b6b90"}}>Low  <span style={{color:"#9b9bc0"}}>{fmt$(price.prices.low)}</span></span>}
@@ -479,9 +649,6 @@ function CardModal({card,owned,manualOwned,manualMissing,priceHistory,onToggleMa
             <button onClick={()=>onToggleManual(card.id,"owned")} style={{flex:1,background:isManualOwned?"rgba(96,165,250,0.15)":"#141425",color:isManualOwned?"#60a5fa":"#6b6b90",border:`1px solid ${isManualOwned?"#60a5fa":"#1e1e35"}`,borderRadius:7,padding:".4rem .5rem",cursor:"pointer",fontSize:".72rem",fontWeight:600}}>✓ Force Owned</button>
             <button onClick={()=>onToggleManual(card.id,"missing")} style={{flex:1,background:isManualMissing?"rgba(248,113,113,0.15)":"#141425",color:isManualMissing?"#f87171":"#6b6b90",border:`1px solid ${isManualMissing?"#f87171":"#1e1e35"}`,borderRadius:7,padding:".4rem .5rem",cursor:"pointer",fontSize:".72rem",fontWeight:600}}>✕ Force Missing</button>
             {overrideStatus!=="auto"&&<button onClick={()=>onToggleManual(card.id,"reset")} style={{background:"#141425",color:"#6b6b90",border:"1px solid #1e1e35",borderRadius:7,padding:".4rem .6rem",cursor:"pointer",fontSize:".72rem"}}>Reset</button>}
-          </div>
-          <div style={{marginTop:".4rem",fontSize:".62rem",color:"#3a3a5a"}}>
-            {overrideStatus==="auto"?"Using CSV matching — override if the app got it wrong.":isManualOwned?"Manually marked as owned. Synced to your account.":"Manually marked as missing. Synced to your account."}
           </div>
         </div>
 
@@ -504,11 +671,17 @@ function CardModal({card,owned,manualOwned,manualMissing,priceHistory,onToggleMa
           <PriceChart history={cardHistory}/>
         </div>
 
-        {card.tcgplayer&&card.tcgplayer.url&&(
-          <a href={card.tcgplayer.url} target="_blank" rel="noopener noreferrer" style={{display:"block",textAlign:"center",background:"#1a1430",color:"#9b7fe8",padding:".5rem",borderRadius:8,textDecoration:"none",fontSize:".78rem",border:"1px solid #2e2255",fontWeight:500}}>
-            View on TCGPlayer →
+        {/* Links row */}
+        <div style={{display:"flex",gap:".5rem"}}>
+          {card.tcgplayer&&card.tcgplayer.url&&(
+            <a href={card.tcgplayer.url} target="_blank" rel="noopener noreferrer" style={{flex:1,display:"block",textAlign:"center",background:"#1a1430",color:"#9b7fe8",padding:".5rem",borderRadius:8,textDecoration:"none",fontSize:".75rem",border:"1px solid #2e2255",fontWeight:500}}>
+              TCGPlayer →
+            </a>
+          )}
+          <a href={ebayUrl} target="_blank" rel="noopener noreferrer" style={{flex:1,display:"block",textAlign:"center",background:"#1a1810",color:"#c8a020",padding:".5rem",borderRadius:8,textDecoration:"none",fontSize:".75rem",border:"1px solid #3a3010",fontWeight:500}}>
+            eBay Sold →
           </a>
-        )}
+        </div>
       </div>
     </div>
   );
@@ -584,44 +757,41 @@ function SettingsPanel({onClose,onClearCache,onClearManual,onSignOut}){
 
 // ── APP ────────────────────────────────────────────────────────────────────────
 function App(){
-  const[view,         setView]         =useState("checking-auth");
-  const[user,         setUser]         =useState(null);
-  const[cardData,     setCardData]     =useState({});
-  const[loadingSet,   setLoadingSet]   =useState(new Set());
-  const[errors,       setErrors]       =useState({});
-  const[ownedKeySet,  setOwnedKeySet]  =useState(new Set());
-  const[manualOwned,  setManualOwned]  =useState(new Set());
-  const[manualMissing,setManualMissing]=useState(new Set());
-  const[priceHistory, setPriceHistory] =useState({});
-  const[selectedCard, setSelectedCard] =useState(null);
-  const[search,       setSearch]       =useState("");
-  const[filterSlug,   setFilterSlug]   =useState("all");
-  const[sortBy,       setSortBy]       =useState("name");
-  const[showSettings, setShowSettings] =useState(false);
-  const[csvStatus,    setCsvStatus]    =useState(null);
-  const[syncStatus,   setSyncStatus]   =useState("idle"); // idle|syncing|synced|error
+  const[view,          setView]         =useState("checking-auth");
+  const[user,          setUser]         =useState(null);
+  const[cardData,      setCardData]     =useState({});
+  const[loadingSet,    setLoadingSet]   =useState(new Set());
+  const[errors,        setErrors]       =useState({});
+  const[ownedKeySet,   setOwnedKeySet]  =useState(new Set());
+  const[manualOwned,   setManualOwned]  =useState(new Set());
+  const[manualMissing, setManualMissing]=useState(new Set());
+  const[priceHistory,  setPriceHistory] =useState({});
+  const[selectedCard,  setSelectedCard] =useState(null);
+  const[search,        setSearch]       =useState("");
+  const[filterSlug,    setFilterSlug]   =useState("all");
+  const[sortBy,        setSortBy]       =useState("name");
+  const[showSettings,  setShowSettings] =useState(false);
+  const[csvStatus,     setCsvStatus]    =useState(null);
+  const[syncStatus,    setSyncStatus]   =useState("idle");
   const fileRef=useRef(null),searchRef=useRef(null);
 
   const getApiKey=()=>lsGet("pb2_api_key")||"";
 
-  // Sync status helper
   const withSync=async(fn)=>{
     setSyncStatus("syncing");
     try{await fn();setSyncStatus("synced");setTimeout(()=>setSyncStatus("idle"),2000);}
     catch(e){console.error(e);setSyncStatus("error");setTimeout(()=>setSyncStatus("idle"),3000);}
   };
 
-  // Load all user data from Supabase
   const loadData=useCallback(async(uid)=>{
     setView("loading-data");
     try{
       const{ownedKeys,manualOwned:mo,manualMissing:mm,priceHistory:ph}=await loadUserData(uid);
       setOwnedKeySet(ownedKeys);setManualOwned(mo);setManualMissing(mm);setPriceHistory(ph);
     }catch(e){console.error("Load error:",e);}
-    setView("landing");
+    setView("dashboard");
   },[]);
 
-  // Auth: check session on mount and listen for changes
   useEffect(()=>{
     sb.auth.getSession().then(({data:{session}})=>{
       if(session?.user){setUser(session.user);loadData(session.user.id);}
@@ -638,13 +808,9 @@ function App(){
     return()=>subscription.unsubscribe();
   },[]);
 
-  const handleSendLink=async(email)=>{
-    const{error}=await sb.auth.signInWithOtp({email,options:{emailRedirectTo:REDIRECT}});
-    if(error)throw error;
-  };
+  const handleSendLink=async(email)=>{const{error}=await sb.auth.signInWithOtp({email,options:{emailRedirectTo:REDIRECT}});if(error)throw error;};
   const handleSignOut=()=>sb.auth.signOut();
 
-  // Card data loading
   const loadEntry=useCallback(async entry=>{
     const slug=toSlug(entry.name);
     setLoadingSet(s=>new Set([...s,slug]));
@@ -655,7 +821,6 @@ function App(){
   },[]);
   useEffect(()=>{ARTISTS.forEach(loadEntry);},[]);
 
-  // CSV upload
   const handleCSV=useCallback(file=>{
     setCsvStatus("loading");
     Papa.parse(file,{header:true,skipEmptyLines:true,complete:async({data})=>{
@@ -669,25 +834,23 @@ function App(){
     },error:()=>{setCsvStatus(null);alert("Could not read CSV.");}});
   },[user]);
 
-  // Manual overrides
   const handleToggleManual=useCallback((cardId,action)=>{
+    let finalAction=action;
     setManualOwned(prev=>{
       const n=new Set(prev);
-      if(action==="owned")n.has(cardId)?n.delete(cardId):n.add(cardId);
+      if(action==="owned"){n.has(cardId)?n.delete(cardId):n.add(cardId);finalAction=n.has(cardId)?"owned":"reset";}
       else if(action==="reset")n.delete(cardId);
-      if(user)withSync(()=>saveOverride(user.id,cardId,action==="owned"?(n.has(cardId)?"owned":"reset"):"reset"));
       return n;
     });
     setManualMissing(prev=>{
       const n=new Set(prev);
-      if(action==="missing")n.has(cardId)?n.delete(cardId):n.add(cardId);
+      if(action==="missing"){n.has(cardId)?n.delete(cardId):n.add(cardId);finalAction=n.has(cardId)?"missing":"reset";}
       else if(action==="reset")n.delete(cardId);
-      if(user&&action==="missing")withSync(()=>saveOverride(user.id,cardId,n.has(cardId)?"missing":"reset"));
       return n;
     });
+    if(user)withSync(()=>saveOverride(user.id,cardId,finalAction));
   },[user]);
 
-  // Price recording
   const handleRecordPrice=useCallback((cardId,price,date)=>{
     setPriceHistory(prev=>{
       const n={...prev};
@@ -701,19 +864,21 @@ function App(){
   },[user]);
 
   const clearCache=()=>{ARTISTS.forEach(e=>lsDel(`pb2_cards_${toSlug(e.name)}`));setCardData({});setErrors({});ARTISTS.forEach(loadEntry);};
-  const clearManual=async()=>{
-    setManualOwned(new Set());setManualMissing(new Set());
-    if(user)withSync(async()=>{await sb.from("card_overrides").delete().eq("user_id",user.id);});
-  };
+  const clearManual=async()=>{setManualOwned(new Set());setManualMissing(new Set());if(user)withSync(async()=>{await sb.from("card_overrides").delete().eq("user_id",user.id);});};
 
   const checkOwned=useCallback(card=>isCardOwned(card,ownedKeySet,manualOwned,manualMissing),[ownedKeySet,manualOwned,manualMissing]);
-  const visibleArtists=filterSlug==="all"?ARTISTS:ARTISTS.filter(a=>toSlug(a.name)===filterSlug);
-  const totalCards=useMemo(()=>Object.values(cardData).reduce((s,a)=>s+a.length,0),[cardData]);
-  const totalOwned=useMemo(()=>Object.values(cardData).reduce((s,cards)=>s+cards.filter(checkOwned).length,0),[cardData,checkOwned]);
-  const totalPct=totalCards?Math.round((totalOwned/totalCards)*100):0;
-  const manualCount=manualOwned.size+manualMissing.size;
 
-  // ── Render non-binder views ──
+  // Navigation helper
+  const goTo=useCallback((target,artistSlug="all")=>{
+    if(target==="landing"){setView("landing");return;}
+    if(target==="dashboard"){setView("dashboard");return;}
+    if(target==="binder"){setFilterSlug(artistSlug);setView("binder");return;}
+    // Artist slug passed directly
+    if(ARTISTS.some(a=>toSlug(a.name)===target)){setFilterSlug(target);setView("binder");return;}
+    setView(target);
+  },[]);
+
+  // ── Non-binder views ──
   if(view==="checking-auth")return(
     <div style={{position:"fixed",inset:0,background:"#030100",display:"flex",alignItems:"center",justifyContent:"center"}}>
       <IcoSpin/>
@@ -724,34 +889,54 @@ function App(){
     <div style={{position:"fixed",inset:0,background:"radial-gradient(ellipse at 50% 110%,#3d0f00 0%,#1a0500 40%,#030100 100%)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:"1rem",overflow:"hidden"}}>
       <FlameBackground dim/>
       <div style={{position:"relative",zIndex:10,textAlign:"center"}}>
-        <div style={{fontSize:"2rem",marginBottom:".5rem"}}>🎴</div>
-        <IcoSpin/>
+        <BlazLogo size={60} glow/>
         <p style={{color:"#ff9944",fontSize:".9rem",marginTop:".75rem"}}>Loading your collection…</p>
       </div>
     </div>
   );
 
   if(view==="landing")return(
-    <LandingPage user={user} onEnter={()=>setView("binder")} onSendLink={handleSendLink} onSignOut={handleSignOut}/>
+    <LandingPage user={user} onEnter={()=>setView("dashboard")} onSendLink={handleSendLink} onSignOut={handleSignOut}/>
+  );
+
+  if(view==="dashboard")return(
+    <>
+      <Dashboard
+        cardData={cardData} checkOwned={checkOwned} user={user}
+        csvStatus={csvStatus} syncStatus={syncStatus}
+        onGoBinder={goTo}
+        onUploadCSV={()=>fileRef.current&&fileRef.current.click()}
+      />
+      {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} priceHistory={priceHistory} onToggleManual={handleToggleManual} onRecordPrice={handleRecordPrice} onClose={()=>setSelectedCard(null)}/>}
+      <input ref={fileRef} type="file" accept=".csv" onChange={e=>{const f=e.target.files&&e.target.files[0];if(f)handleCSV(f);e.target.value="";}} style={{display:"none"}}/>
+    </>
   );
 
   // ── Binder view ──
+  const visibleArtists=filterSlug==="all"?ARTISTS:ARTISTS.filter(a=>toSlug(a.name)===filterSlug);
+  const totalCards=Object.values(cardData).reduce((s,a)=>s+a.length,0);
+  const totalOwned=Object.values(cardData).reduce((s,cards)=>s+cards.filter(checkOwned).length,0);
+  const totalPct=totalCards?Math.round((totalOwned/totalCards)*100):0;
+  const manualCount=manualOwned.size+manualMissing.size;
   const selSt={background:"#0f0f1c",border:"1px solid #1e1e35",borderRadius:8,color:"#e8e8f4",padding:".4rem .6rem",fontSize:".76rem"};
-  const syncIcon=syncStatus==="syncing"?<IcoSpin/>:syncStatus==="synced"?<span style={{color:"#22c55e",fontSize:".65rem"}}>✓ Synced</span>:syncStatus==="error"?<span style={{color:"#f87171",fontSize:".65rem"}}>Sync failed</span>:null;
+  const syncIcon=syncStatus==="syncing"?<IcoSpin/>:syncStatus==="synced"?<span style={{color:"#22c55e",fontSize:".65rem"}}>✓</span>:null;
 
   return(
     <div style={{minHeight:"100dvh",background:"#07070f"}}>
       <header style={{position:"sticky",top:0,zIndex:100,background:"rgba(7,7,15,0.97)",backdropFilter:"blur(18px)",WebkitBackdropFilter:"blur(18px)",borderBottom:"1px solid #1e1e35"}}>
         <div style={{maxWidth:860,margin:"0 auto",padding:".7rem 1rem"}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:".6rem"}}>
-            <div style={{display:"flex",alignItems:"baseline",gap:".6rem"}}>
-              <h1 style={{fontSize:"1rem",fontWeight:800,color:"#e8e8f4",letterSpacing:"-.02em",cursor:"pointer"}} onClick={()=>setView("landing")}>🎴 Artist Binder</h1>
-              {totalCards>0&&<span style={{fontSize:".7rem",color:"#6b6b90",fontVariantNumeric:"tabular-nums"}}>{totalOwned}/{totalCards} · {totalPct}%</span>}
-              {manualCount>0&&<span style={{fontSize:".62rem",color:"#60a5fa",background:"rgba(96,165,250,0.1)",padding:"1px 6px",borderRadius:4}}>{manualCount} manual</span>}
-              {syncIcon&&<span style={{display:"flex",alignItems:"center",gap:3}}>{syncIcon}</span>}
+            <div style={{display:"flex",alignItems:"center",gap:".5rem",cursor:"pointer"}} onClick={()=>setView("dashboard")}>
+              <BlazLogo size={26}/>
+              <div style={{display:"flex",alignItems:"baseline",gap:".5rem"}}>
+                <span style={{fontWeight:800,fontSize:".95rem",color:"#e8e8f4",letterSpacing:"-.02em"}}>Artist Binder</span>
+                {totalCards>0&&<span style={{fontSize:".7rem",color:"#6b6b90",fontVariantNumeric:"tabular-nums"}}>{totalOwned}/{totalCards} · {totalPct}%</span>}
+                {manualCount>0&&<span style={{fontSize:".62rem",color:"#60a5fa",background:"rgba(96,165,250,0.1)",padding:"1px 6px",borderRadius:4}}>{manualCount} manual</span>}
+                {syncIcon&&<span style={{display:"flex",alignItems:"center",gap:3}}>{syncIcon}</span>}
+              </div>
             </div>
             <div style={{display:"flex",gap:".4rem",alignItems:"center"}}>
-              {csvStatus==="loading"&&<span style={{fontSize:".7rem",color:"#6b6b90",display:"flex",alignItems:"center",gap:4}}><IcoSpin/> Reading…</span>}
+              {csvStatus==="loading"&&<span style={{fontSize:".7rem",color:"#6b6b90",display:"flex",alignItems:"center",gap:4}}><IcoSpin/>Reading…</span>}
               {csvStatus?.count&&<span style={{fontSize:".7rem",color:"#22c55e"}}>✓ {csvStatus.count} Pokémon</span>}
               <button onClick={()=>fileRef.current&&fileRef.current.click()} style={{display:"flex",alignItems:"center",gap:".35rem",background:"#1e1e35",color:"#8b6cd8",border:"1px solid #2a2a50",borderRadius:8,padding:".38rem .65rem",cursor:"pointer",fontSize:".75rem",fontWeight:600}}>
                 <IcoUpload/> Upload CSV
@@ -787,7 +972,6 @@ function App(){
 
       <main style={{maxWidth:860,margin:"0 auto",padding:"1rem"}}>
         {totalCards>0&&<div style={{height:2,background:"#1e1e35",borderRadius:1,overflow:"hidden",marginBottom:"1.5rem"}}><div className="prog-fill" style={{width:`${totalPct}%`,height:"100%",background:"#8b6cd8",borderRadius:1}}/></div>}
-
         {visibleArtists.map(entry=>{
           const slug=toSlug(entry.name),cards=cardData[slug]||[];
           const isLoading=loadingSet.has(slug),err=errors[slug];
@@ -796,7 +980,6 @@ function App(){
           if(!cards.length)return null;
           return<ArtistSection key={entry.name} entry={entry} cards={cards} checkOwned={checkOwned} manualOwned={manualOwned} manualMissing={manualMissing} onCardClick={setSelectedCard} searchQuery={search} sortBy={sortBy}/>;
         })}
-
         {search&&!visibleArtists.some(entry=>{const cards=cardData[toSlug(entry.name)]||[];const q=search.toLowerCase();return cards.some(c=>c.name.toLowerCase().includes(q));})&&(
           <div style={{textAlign:"center",padding:"3rem 1rem",color:"#6b6b90",fontSize:".875rem"}}>No cards matching "{search}"</div>
         )}
