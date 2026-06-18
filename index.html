@@ -189,7 +189,7 @@ async function fetchFullCard(id){
   return res.json();
 }
 async function fetchArtistCards(entry){
-  const ck=`pb4_cards_${toSlug(entry.name)}`;
+  const ck=`pb5_cards_${toSlug(entry.name)}`;
   const cached=lsGet(ck);
   if(cached&&cached.ts&&Date.now()-cached.ts<CACHE_TTL)return cached.cards;
   const briefs=await fetchCardBriefs(entry);
@@ -792,7 +792,7 @@ function App(){
     setPriceHistory(prev=>{const n={...prev};if(!n[cardId])n[cardId]=[];if(!n[cardId].find(h=>h.date===date)){n[cardId]=[...n[cardId],{date,price}].slice(-180);if(user)savePricePoint(user.id,cardId,price,date).catch(console.error);}return n;});
   },[user]);
 
-  const clearCache=()=>{ARTISTS.forEach(e=>lsDel(`pb4_cards_${toSlug(e.name)}`));setCardData({});setErrors({});loadAllEntries();};
+  const clearCache=()=>{ARTISTS.forEach(e=>lsDel(`pb5_cards_${toSlug(e.name)}`));setCardData({});setErrors({});loadAllEntries();};
   const clearManual=async()=>{setManualOwned(new Set());setManualMissing(new Set());if(user)withSync(async()=>{await sb.from("card_overrides").delete().eq("user_id",user.id);});};
 
   const checkOwned=useCallback(card=>isCardOwned(card,ownedKeySet,manualOwned,manualMissing),[ownedKeySet,manualOwned,manualMissing]);
