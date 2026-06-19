@@ -351,16 +351,20 @@ function FlameBackground({dim}){
 }
 
 // ── LANDING / AUTH ────────────────────────────────────────────────────────────
-function LandingPage({user,onEnter,onSendLink,onSignOut}){
+function LandingPage({user,onEnter,onSendLink,onVerifyCode,onSignOut}){
   const[email,setEmail]=useState("");
   const[linkSent,setLinkSent]=useState(false);
   const[sending,setSending]=useState(false);
   const[error,setError]=useState("");
   const[exiting,setExiting]=useState(false);
+  const[code,setCode]=useState("");
+  const[verifying,setVerifying]=useState(false);
+  const[codeError,setCodeError]=useState("");
   const isLoggedIn=!!user;
   const enter=()=>{setExiting(true);setTimeout(onEnter,420);};
   useEffect(()=>{const fn=e=>{if(e.key==="Enter"&&isLoggedIn)enter();};window.addEventListener("keydown",fn);return()=>window.removeEventListener("keydown",fn);},[isLoggedIn]);
   const send=async()=>{if(!email.trim())return;setSending(true);setError("");try{await onSendLink(email.trim());setLinkSent(true);}catch(err){setError(err.message||"Failed to send.");}finally{setSending(false);}};
+  const verify=async()=>{if(!code.trim())return;setVerifying(true);setCodeError("");try{await onVerifyCode(email.trim(),code.trim());}catch(err){setCodeError(err.message||"That code didn't work.");}finally{setVerifying(false);}};
   const cardStyle={background:"rgba(7,7,15,0.78)",border:"1px solid rgba(255,100,0,0.18)",borderRadius:16,padding:"1.75rem",maxWidth:360,width:"100%",backdropFilter:"blur(14px)",WebkitBackdropFilter:"blur(14px)"};
   const inputStyle={width:"100%",background:"rgba(255,255,255,0.06)",border:"1px solid rgba(255,100,0,0.3)",borderRadius:10,color:"#fff8f0",padding:".65rem 1rem",fontSize:"1rem",marginBottom:".75rem",outline:"none"};
   return(
@@ -390,8 +394,14 @@ function LandingPage({user,onEnter,onSendLink,onSignOut}){
           <div onClick={e=>e.stopPropagation()} style={{...cardStyle,marginTop:"1rem"}}>
             <div style={{fontSize:"2rem",marginBottom:".75rem"}}>📬</div>
             <h2 style={{fontSize:"1.05rem",fontWeight:700,color:"#fff8f0",marginBottom:".5rem"}}>Check your email</h2>
-            <p style={{fontSize:".82rem",color:"#ff9944",marginBottom:"1.25rem",lineHeight:1.5}}>Magic link sent to <strong style={{color:"#fff8f0"}}>{email}</strong>.<br/>Click it to sign in.</p>
-            <button onClick={()=>setLinkSent(false)} style={{background:"none",border:"1px solid rgba(255,100,0,0.3)",color:"#ff9944",borderRadius:8,padding:".45rem 1rem",cursor:"pointer",fontSize:".78rem"}}>Try a different email</button>
+            <p style={{fontSize:".82rem",color:"#ff9944",marginBottom:"1rem",lineHeight:1.5}}>Sent to <strong style={{color:"#fff8f0"}}>{email}</strong>. Tap the link if you're on desktop or in a regular browser tab.</p>
+            <div style={{borderTop:"1px solid rgba(255,100,0,0.18)",paddingTop:".9rem",marginBottom:".9rem"}}>
+              <p style={{fontSize:".7rem",color:"#c87840",marginBottom:".55rem",lineHeight:1.4}}>Installed the app to your home screen? Tapping the link opens it in your browser instead — type the code from the same email here instead, it'll sign in right in the app.</p>
+              <input type="text" inputMode="numeric" placeholder="123456" value={code} onChange={e=>setCode(e.target.value)} onKeyDown={e=>e.key==="Enter"&&verify()} style={{...inputStyle,marginBottom:".5rem",textAlign:"center",letterSpacing:".2em",fontSize:"1.1rem"}}/>
+              {codeError&&<p style={{fontSize:".72rem",color:"#f87171",marginBottom:".5rem"}}>{codeError}</p>}
+              <button onClick={verify} disabled={verifying||!code.trim()} style={{width:"100%",background:"linear-gradient(135deg,#ff5500,#ff2200)",color:"#fff8f0",border:"none",borderRadius:10,padding:".65rem",fontSize:".85rem",fontWeight:800,cursor:"pointer",opacity:(verifying||!code.trim())?.45:1}}>{verifying?"Checking…":"Enter Code"}</button>
+            </div>
+            <button onClick={()=>{setLinkSent(false);setCode("");setCodeError("");}} style={{background:"none",border:"1px solid rgba(255,100,0,0.3)",color:"#ff9944",borderRadius:8,padding:".45rem 1rem",cursor:"pointer",fontSize:".78rem"}}>Try a different email</button>
           </div>
         ):(
           <div onClick={e=>e.stopPropagation()} style={{...cardStyle,marginTop:"1rem"}}>
@@ -1137,6 +1147,7 @@ function App(){
   },[]);
 
   const handleSendLink=async email=>{const{error}=await sb.auth.signInWithOtp({email,options:{emailRedirectTo:REDIRECT}});if(error)throw error;};
+  const handleVerifyCode=async(email,token)=>{const{error}=await sb.auth.verifyOtp({email,token,type:"email"});if(error)throw error;};
   const handleSignOut=()=>sb.auth.signOut();
 
   const loadEntry=useCallback(async entry=>{
@@ -1221,7 +1232,7 @@ function App(){
     </div>
   );
 
-  if(view==="landing")return<LandingPage user={user} onEnter={()=>setView("dashboard")} onSendLink={handleSendLink} onSignOut={handleSignOut}/>;
+  if(view==="landing")return<LandingPage user={user} onEnter={()=>setView("dashboard")} onSendLink={handleSendLink} onVerifyCode={handleVerifyCode} onSignOut={handleSignOut}/>;
 
   if(view==="dashboard")return(
     <>
