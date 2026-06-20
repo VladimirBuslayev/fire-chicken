@@ -279,21 +279,37 @@ function buildLimitlessGuess(card){
   return{small:`${base}_SM.png`,large:`${base}_LG.png`};
 }
 async function fetchArtistCards(entry){
-  const ck=`pb5_cards_${toSlug(entry.name)}`;
+  const ck=`pb6_cards_${toSlug(entry.name)}`;
   const cached=lsGet(ck);
   if(cached&&cached.ts&&Date.now()-cached.ts<CACHE_TTL)return cached.cards;
-  const briefs=await fetchCardBriefs(entry);
+  const rawBriefs=await fetchCardBriefs(entry);
+  // TCGdex's illustrator endpoint can list the same card id more than once
+  // (e.g. a card cross-linked under multiple printings) — dedupe up front so
+  // we don't waste a detail fetch on it twice or show it twice in the grid.
+  const seen=new Set();
+  const briefs=rawBriefs.filter(b=>{
+    if(!b||!b.id||seen.has(b.id))return false;
+    seen.add(b.id);
+    return true;
+  });
   const fullCards=[];
+  let failCount=0;
   for(let i=0;i<briefs.length;i+=FETCH_BATCH){
     const batch=briefs.slice(i,i+FETCH_BATCH);
     const results=await Promise.all(batch.map(b=>fetchFullCard(b.id).catch(()=>null)));
-    results.forEach(c=>{if(c)fullCards.push(c);});
+    results.forEach(c=>{if(c)fullCards.push(c);else failCount++;});
   }
   // If TCGdex told us cards exist but every single detail fetch failed (e.g. a
   // burst of requests got throttled), don't cache that as a real "0 cards"
   // result for 24h — surface it as a retryable error instead.
   if(briefs.length>0&&fullCards.length===0){
     throw new Error(`Found ${briefs.length} cards but all detail fetches failed — likely rate-limited`);
+  }
+  // A *partial* failure is just as unsafe to cache: a few throttled requests
+  // would otherwise get silently baked in as "this artist only has N cards"
+  // for a full 24h, hiding real cards from the binder with no visible error.
+  if(failCount>0){
+    throw new Error(`${failCount} of ${briefs.length} card detail fetches failed — likely rate-limited, retry shortly`);
   }
   fullCards.sort((a,b)=>(a.name||"").localeCompare(b.name||""));
   lsSet(ck,{cards:fullCards,ts:Date.now()});
@@ -1199,7 +1215,7 @@ function App(){
     setPriceHistory(prev=>{const n={...prev};if(!n[cardId])n[cardId]=[];if(!n[cardId].find(h=>h.date===date)){n[cardId]=[...n[cardId],{date,price}].slice(-180);if(user)savePricePoint(user.id,cardId,price,date).catch(console.error);}return n;});
   },[user]);
 
-  const clearCache=()=>{ARTISTS.forEach(e=>lsDel(`pb5_cards_${toSlug(e.name)}`));setCardData({});setErrors({});loadAllEntries();};
+  const clearCache=()=>{ARTISTS.forEach(e=>lsDel(`pb6_cards_${toSlug(e.name)}`));setCardData({});setErrors({});loadAllEntries();};
   const clearManual=async()=>{setManualOwned(new Set());setManualMissing(new Set());if(user)withSync(async()=>{await sb.from("card_overrides").delete().eq("user_id",user.id);});};
   const toggleHideTcgPocket=()=>setHideTcgPocket(v=>{const n=!v;lsSet("pb_hide_tcgp",n);return n;});
   const toggleShowAllColor=()=>setShowAllColor(v=>{const n=!v;lsSet("pb_show_all_color",n);return n;});
