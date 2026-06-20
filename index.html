@@ -420,7 +420,7 @@ function LandingPage({user,onEnter,onSendLink,onVerifyCode,onSignOut}){
 }
 
 // ── DASHBOARD ─────────────────────────────────────────────────────────────────
-function Dashboard({cardData,checkOwned,favorites,user,onGoBinder,onUploadCSV,csvStatus,syncStatus,loadingSet,errors}){
+function Dashboard({cardData,checkOwned,favorites,user,onGoBinder,onUploadCSV,csvStatus,syncStatus,loadingSet,errors,onCardClick}){
   const totalCards=useMemo(()=>Object.values(cardData).reduce((s,a)=>s+a.length,0),[cardData]);
   const totalOwned=useMemo(()=>Object.values(cardData).reduce((s,a)=>s+a.filter(checkOwned).length,0),[cardData,checkOwned]);
   const totalPct=totalCards?Math.round((totalOwned/totalCards)*100):0;
@@ -524,7 +524,7 @@ function Dashboard({cardData,checkOwned,favorites,user,onGoBinder,onUploadCSV,cs
                 const price=getBestPrice(card);
                 const sm=imgSmall(card);
                 return(
-                  <div key={card.id} className="wanted-row" style={{display:"flex",alignItems:"center",gap:".75rem",padding:".6rem .75rem"}}>
+                  <div key={card.id} className="wanted-row" onClick={()=>onCardClick&&onCardClick(card)} style={{display:"flex",alignItems:"center",gap:".75rem",padding:".6rem .75rem",cursor:"pointer"}}>
                     <div style={{fontSize:".7rem",color:"#3a3a5a",fontWeight:700,flexShrink:0,width:18}}>{i+1}</div>
                     {sm&&<img src={sm} alt={card.name} style={{width:38,height:"auto",borderRadius:4,filter:"grayscale(0.15)",flexShrink:0}}/>}
                     <div style={{flex:1,minWidth:0}}>
@@ -1236,7 +1236,7 @@ function App(){
 
   if(view==="dashboard")return(
     <>
-      <Dashboard cardData={visibleCardData} checkOwned={checkOwned} favorites={favorites} user={user} csvStatus={csvStatus} syncStatus={syncStatus} onGoBinder={goTo} onUploadCSV={()=>fileRef.current&&fileRef.current.click()} loadingSet={loadingSet} errors={errors}/>
+      <Dashboard cardData={visibleCardData} checkOwned={checkOwned} favorites={favorites} user={user} csvStatus={csvStatus} syncStatus={syncStatus} onGoBinder={goTo} onUploadCSV={()=>fileRef.current&&fileRef.current.click()} loadingSet={loadingSet} errors={errors} onCardClick={setSelectedCard}/>
       {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(selectedCard.id)} priceHistory={priceHistory} onToggleManual={handleToggleManual} onToggleFavorite={handleToggleFavorite} onRecordPrice={handleRecordPrice} onClose={()=>setSelectedCard(null)}/>}
       <input ref={fileRef} type="file" accept=".csv" onChange={e=>{const f=e.target.files&&e.target.files[0];if(f)handleCSV(f);e.target.value="";}} style={{display:"none"}}/>
     </>
