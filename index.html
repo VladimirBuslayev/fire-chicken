@@ -776,7 +776,7 @@ function ArtistSection({entry,cards,checkOwned,manualOwned,manualMissing,favorit
   const[showFact,setShowFact]=useState(false);
   const fact=ARTIST_FACTS[entry.name];
   const displayCards=useMemo(()=>{let arr=cards;if(searchQuery){const q=searchQuery.toLowerCase();arr=arr.filter(c=>(c.name||"").toLowerCase().includes(q));}return sortCards(arr,sortBy,checkOwned);},[cards,searchQuery,sortBy,checkOwned]);
-  const groupedBySet=useMemo(()=>{if(sortBy!=="missing"&&sortBy!=="owned")return null;const filtered=searchQuery?cards.filter(c=>(c.name||"").toLowerCase().includes(searchQuery.toLowerCase())):cards;const groups=new Map();filtered.forEach(card=>{const sid=(card.set&&card.set.id)||"unknown",sname=(card.set&&card.set.name)||"Unknown Set",sdate=(card.set&&card.set.releaseDate)||"0000/00/00";if(!groups.has(sid))groups.set(sid,{name:sname,date:sdate,cards:[]});groups.get(sid).cards.push(card);});groups.forEach(g=>{g.cards.sort((a,b)=>{const ao=checkOwned(a),bo=checkOwned(b);if(ao!==bo)return sortBy==="missing"?(ao?1:-1):(ao?-1:1);return(a.name||"").localeCompare(b.name||"");});});return Array.from(groups.values()).sort((a,b)=>a.date.localeCompare(b.date));},[cards,searchQuery,sortBy,checkOwned]);
+  const groupedBySet=useMemo(()=>{if(sortBy!=="missing"&&sortBy!=="owned")return null;const filtered=searchQuery?cards.filter(c=>(c.name||"").toLowerCase().includes(searchQuery.toLowerCase())):cards;const missingCards=filtered.filter(c=>!checkOwned(c));const ownedCards=filtered.filter(c=>checkOwned(c));const bySet=list=>{const groups=new Map();list.forEach(card=>{const sid=(card.set&&card.set.id)||"unknown",sname=(card.set&&card.set.name)||"Unknown Set",sdate=(card.set&&card.set.releaseDate)||"0000/00/00";if(!groups.has(sid))groups.set(sid,{name:sname,date:sdate,cards:[]});groups.get(sid).cards.push(card);});groups.forEach(g=>{g.cards.sort((a,b)=>(a.name||"").localeCompare(b.name||""));});return Array.from(groups.values()).sort((a,b)=>a.date.localeCompare(b.date));};return{missing:bySet(missingCards),owned:bySet(ownedCards),missingCount:missingCards.length,ownedCount:ownedCards.length};},[cards,searchQuery,sortBy,checkOwned]);
   const ownedCount=useMemo(()=>cards.filter(checkOwned).length,[cards,checkOwned]);
   const pct=cards.length?Math.round((ownedCount/cards.length)*100):0;
   const complete=pct===100&&cards.length>0;
@@ -804,7 +804,7 @@ function ArtistSection({entry,cards,checkOwned,manualOwned,manualMissing,favorit
       )}
       {open&&(
         groupedBySet?(
-          groupedBySet.map((group,gi)=>{const miss=group.cards.filter(c=>!checkOwned(c)).length;return(<div key={group.name+gi}><div style={{display:"flex",alignItems:"center",gap:".5rem",marginTop:gi>0?".9rem":"0",marginBottom:".4rem"}}><span style={{fontSize:".6rem",color:"#4a4a70",fontWeight:700,letterSpacing:".05em",whiteSpace:"nowrap"}}>{group.name}</span><div style={{flex:1,height:"1px",background:"#151520"}}/>{miss>0&&<span style={{fontSize:".58rem",color:"#3a2a50",whiteSpace:"nowrap"}}>{miss} missing</span>}</div><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(76px,1fr))",gap:"6px"}}>{group.cards.map(card=><CardTile key={card.id} card={card} owned={checkOwned(card)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(card.id)} onCardClick={onCardClick} onToggleFavorite={onToggleFavorite} readOnly={readOnly}/>)}</div></div>);})
+          <>{groupedBySet.missingCount>0&&(<div style={{marginBottom:"1.5rem"}}><div style={{display:"flex",alignItems:"center",gap:".6rem",marginBottom:".75rem"}}><span style={{fontSize:".58rem",letterSpacing:".12em",fontWeight:800,color:"#9b7ce8",whiteSpace:"nowrap"}}>MISSING · {groupedBySet.missingCount}</span><div style={{flex:1,height:"1px",background:"rgba(139,108,216,0.18)"}}/></div>{groupedBySet.missing.map((group,gi)=>(<div key={group.name+gi} style={{marginBottom:".7rem"}}><div style={{display:"flex",alignItems:"center",gap:".5rem",marginBottom:".3rem"}}><span style={{fontSize:".58rem",color:"#4a4a70",fontWeight:700,letterSpacing:".04em",whiteSpace:"nowrap"}}>{group.name}</span><div style={{flex:1,height:"1px",background:"#0d0d1a"}}/><span style={{fontSize:".55rem",color:"#3a2a50",whiteSpace:"nowrap",flexShrink:0}}>{group.cards.length}</span></div><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(76px,1fr))",gap:"6px"}}>{group.cards.map(card=><CardTile key={card.id} card={card} owned={false} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(card.id)} onCardClick={onCardClick} onToggleFavorite={onToggleFavorite} readOnly={readOnly}/>)}</div></div>))}</div>)}{groupedBySet.ownedCount>0&&(<div><div style={{display:"flex",alignItems:"center",gap:".6rem",marginBottom:".75rem"}}><span style={{fontSize:".58rem",letterSpacing:".12em",fontWeight:800,color:"#3a7a4a",whiteSpace:"nowrap"}}>OWNED · {groupedBySet.ownedCount}</span><div style={{flex:1,height:"1px",background:"rgba(34,197,94,0.12)"}}/></div>{groupedBySet.owned.map((group,gi)=>(<div key={group.name+gi} style={{marginBottom:".7rem"}}><div style={{display:"flex",alignItems:"center",gap:".5rem",marginBottom:".3rem"}}><span style={{fontSize:".58rem",color:"#2a3a2a",fontWeight:700,letterSpacing:".04em",whiteSpace:"nowrap"}}>{group.name}</span><div style={{flex:1,height:"1px",background:"#09120a"}}/><span style={{fontSize:".55rem",color:"#1e3a1e",whiteSpace:"nowrap",flexShrink:0}}>{group.cards.length}</span></div><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(76px,1fr))",gap:"6px"}}>{group.cards.map(card=><CardTile key={card.id} card={card} owned={true} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(card.id)} onCardClick={onCardClick} onToggleFavorite={onToggleFavorite} readOnly={readOnly}/>)}</div></div>))}</div>)}</>
         ):(
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(76px,1fr))",gap:"6px"}}>
             {displayCards.map(card=><CardTile key={card.id} card={card} owned={checkOwned(card)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(card.id)} onCardClick={onCardClick} onToggleFavorite={onToggleFavorite} readOnly={readOnly}/>)}
@@ -1103,11 +1103,11 @@ function SharedBinder({token}){
               <optgroup label="Secondary">{sharedArtists.filter(a=>a.tier==="secondary").map(a=><option key={a.name} value={toSlug(a.name)}>{a.name}</option>)}</optgroup>
               <optgroup label="Special">{ARTISTS.filter(a=>a.tier==="special").map(a=><option key={a.name} value={toSlug(a.name)}>{a.name}</option>)}</optgroup>
             </select>
-            <select value={sortBy} onChange={e=>setSortBy(e.target.value)} style={{...selSt,maxWidth:148}}>
-              <option value="name">Name A–Z</option>
-              <option value="missing">Missing first</option>
-              <option value="owned">Owned first</option>
-            </select>
+            <div style={{display:"flex",gap:".3rem",alignItems:"center",flexShrink:0}}>
+              <button onClick={()=>setSortBy(sortBy==="missing"?"name":"missing")} style={{background:sortBy==="missing"?"rgba(139,108,216,0.2)":"#0f0f1c",color:sortBy==="missing"?"#c0a0f8":"#6b6b90",border:`1px solid ${sortBy==="missing"?"#8b6cd8":"#1e1e35"}`,borderRadius:7,padding:".38rem .65rem",cursor:"pointer",fontSize:".74rem",fontWeight:sortBy==="missing"?700:500,whiteSpace:"nowrap"}}>Missing</button>
+              <button onClick={()=>setSortBy(sortBy==="owned"?"name":"owned")} style={{background:sortBy==="owned"?"rgba(34,197,94,0.12)":"#0f0f1c",color:sortBy==="owned"?"#6ee7b7":"#6b6b90",border:`1px solid ${sortBy==="owned"?"#22c55e":"#1e1e35"}`,borderRadius:7,padding:".38rem .65rem",cursor:"pointer",fontSize:".74rem",fontWeight:sortBy==="owned"?700:500,whiteSpace:"nowrap"}}>Owned</button>
+              <button onClick={()=>setSortBy("name")} style={{background:sortBy==="name"?"rgba(100,100,160,0.2)":"#0f0f1c",color:sortBy==="name"?"#b0b0e8":"#6b6b90",border:`1px solid ${sortBy==="name"?"#6060a0":"#1e1e35"}`,borderRadius:7,padding:".38rem .6rem",cursor:"pointer",fontSize:".74rem",fontWeight:sortBy==="name"?700:500,whiteSpace:"nowrap"}}>A–Z</button>
+            </div>
           </div>
         </div>
       </header>
@@ -1313,15 +1313,17 @@ function App(){
               <optgroup label="Secondary">{ARTISTS.filter(a=>a.tier==="secondary").map(a=><option key={a.name} value={toSlug(a.name)}>{a.name}</option>)}</optgroup>
               <optgroup label="Special">{ARTISTS.filter(a=>a.tier==="special").map(a=><option key={a.name} value={toSlug(a.name)}>{a.name}</option>)}</optgroup>
             </select>
-            <select value={sortBy} onChange={e=>setSortBy(e.target.value)} style={{...selSt,maxWidth:148}}>
-              <option value="name">Name A–Z</option>
-              <option value="missing">Missing first</option>
-              <option value="owned">Owned first</option>
-              <option value="price-desc">Price: High → Low</option>
-              <option value="price-asc">Price: Low → High</option>
-              <option value="date-desc">Newest first</option>
-              <option value="date-asc">Oldest first</option>
-            </select>
+            <div style={{display:"flex",gap:".3rem",alignItems:"center",flexShrink:0}}>
+              <button onClick={()=>setSortBy(sortBy==="missing"?"name":"missing")} style={{background:sortBy==="missing"?"rgba(139,108,216,0.2)":"#0f0f1c",color:sortBy==="missing"?"#c0a0f8":"#6b6b90",border:`1px solid ${sortBy==="missing"?"#8b6cd8":"#1e1e35"}`,borderRadius:7,padding:".38rem .65rem",cursor:"pointer",fontSize:".74rem",fontWeight:sortBy==="missing"?700:500,transition:"all .15s",whiteSpace:"nowrap"}}>Missing</button>
+              <button onClick={()=>setSortBy(sortBy==="owned"?"name":"owned")} style={{background:sortBy==="owned"?"rgba(34,197,94,0.12)":"#0f0f1c",color:sortBy==="owned"?"#6ee7b7":"#6b6b90",border:`1px solid ${sortBy==="owned"?"#22c55e":"#1e1e35"}`,borderRadius:7,padding:".38rem .65rem",cursor:"pointer",fontSize:".74rem",fontWeight:sortBy==="owned"?700:500,transition:"all .15s",whiteSpace:"nowrap"}}>Owned</button>
+              <select value={["missing","owned"].includes(sortBy)?"name":sortBy} onChange={e=>setSortBy(e.target.value)} style={{...selSt,fontSize:".72rem",paddingLeft:".5rem",paddingRight:".5rem",maxWidth:80}}>
+                <option value="name">A–Z</option>
+                <option value="price-desc">$↓</option>
+                <option value="price-asc">$↑</option>
+                <option value="date-desc">New</option>
+                <option value="date-asc">Old</option>
+              </select>
+            </div>
           </div>
         </div>
       </header>
