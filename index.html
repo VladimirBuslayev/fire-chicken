@@ -180,7 +180,7 @@ const sortCards=(arr,sortBy,checkOwned)=>{
   if(!arr||!arr.length)return arr;const a2=arr.slice();
   const priceOf=c=>{const p=getBestPrice(c);return p?p.amount:null;};
   const byName=(a,b)=>(a.name||"").localeCompare(b.name||"");
-  const byDate=(a,b)=>{const da=a.set&&a.set.releaseDate||"",db=b.set&&b.set.releaseDate||"";return da===db?byName(a,b):da.localeCompare(db);};
+  const parseDateNum=s=>{if(!s)return 0;const p=String(s).split(/[\/\-]/);return(parseInt(p[0]||0)*10000)+(parseInt(p[1]||0)*100)+parseInt(p[2]||0);};   const byDate=(a,b)=>{const da=parseDateNum(a.set&&a.set.releaseDate),db=parseDateNum(b.set&&b.set.releaseDate);return da===db?byName(a,b):da-db;};
   switch(sortBy){
     case"price-desc":return a2.sort((a,b)=>{const pa=priceOf(a),pb=priceOf(b);if(pa===null&&pb===null)return byName(a,b);if(pa===null)return 1;if(pb===null)return-1;return pb-pa||byName(a,b);});
     case"price-asc": return a2.sort((a,b)=>{const pa=priceOf(a),pb=priceOf(b);if(pa===null&&pb===null)return byName(a,b);if(pa===null)return 1;if(pb===null)return-1;return pa-pb||byName(a,b);});
