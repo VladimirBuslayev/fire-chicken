@@ -801,6 +801,7 @@ function ArtistSection({entry,cards,checkOwned,manualOwned,manualMissing,favorit
           <div style={{fontSize:".64rem",letterSpacing:".06em",color:"#9a7ab0",fontWeight:700,marginBottom:".25rem",textTransform:"uppercase"}}>{fact.since}</div>
           {fact.fact}
         </div>
+      )}
       {open&&(
         groupedBySet?(
           groupedBySet.map((group,gi)=>{const miss=group.cards.filter(c=>!checkOwned(c)).length;return(<div key={group.name+gi}><div style={{display:"flex",alignItems:"center",gap:".5rem",marginTop:gi>0?".9rem":"0",marginBottom:".4rem"}}><span style={{fontSize:".6rem",color:"#4a4a70",fontWeight:700,letterSpacing:".05em",whiteSpace:"nowrap"}}>{group.name}</span><div style={{flex:1,height:"1px",background:"#151520"}}/>{miss>0&&<span style={{fontSize:".58rem",color:"#3a2a50",whiteSpace:"nowrap"}}>{miss} missing</span>}</div><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(76px,1fr))",gap:"6px"}}>{group.cards.map(card=><CardTile key={card.id} card={card} owned={checkOwned(card)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(card.id)} onCardClick={onCardClick} onToggleFavorite={onToggleFavorite} readOnly={readOnly}/>)}</div></div>);})
