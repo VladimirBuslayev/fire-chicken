@@ -51,7 +51,82 @@ function resolveArtistId(illustrator, aliasMap) {
   return aliasMap.get(illustrator.trim().toLowerCase()) || null;
 }
 
+// ── Pricing adapter ───────────────────────────────────────────────────────────
+// TCGdex pricing shape differs from the frontend-compatible shape stored in
+// Supabase. The adapter runs at write time (here) so the frontend reads a
+// stable, predictable contract from Supabase and never depends on upstream
+// field names.
+//
+// TCGdex TCGPlayer shape (confirmed):
+//   pricing.tcgplayer.{variant}.marketPrice / lowPrice / midPrice / highPrice
+//   pricing.tcgplayer.updated  (metadata sibling)
+//   pricing.tcgplayer.unit     (metadata sibling)
+//   Known variant keys: normal, holo, reverse
+//
+// TCGdex Cardmarket shape (confirmed):
+//   pricing.cardmarket.avg / low / trend / url / unit / updated / avg30 / …
+
+// Maps known TCGdex TCGPlayer variant keys to frontend PRICE_VARIANT_ORDER keys.
+// Unknown keys are passed through unchanged so they surface in "All Variants"
+// rather than silently disappearing.
+const VARIANT_KEY_MAP = {
+  normal:  'normal',
+  holo:    'holofoil',
+  reverse: 'reverse-holofoil',
+  // Additional keys (e.g. first-edition, unlimited variants) to be added here
+  // once confirmed against a live WotC-era card response.
+};
+
+function adaptTcgplayer(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const adapted = {};
+  for (const [key, value] of Object.entries(raw)) {
+    // Preserve metadata siblings the frontend filters during variant enumeration
+    if (key === 'updated' || key === 'unit') {
+      adapted[key] = value;
+      continue;
+    }
+    if (!value || typeof value !== 'object') continue;
+    const normalizedKey = VARIANT_KEY_MAP[key] ?? key;
+    adapted[normalizedKey] = {
+      marketPrice: value.marketPrice ?? null,
+      lowPrice:    value.lowPrice    ?? null,
+      midPrice:    value.midPrice    ?? null,
+      highPrice:   value.highPrice   ?? null,
+    };
+  }
+  return Object.keys(adapted).length > 0 ? adapted : null;
+}
+
+function adaptCardmarket(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  // TCGdex Cardmarket fields are flat; frontend expects { url, prices: {...} }
+  return {
+    url: raw.url ?? null,
+    prices: {
+      averageSellPrice: raw.avg   ?? null,
+      lowPrice:         raw.low   ?? null,
+      trendPrice:       raw.trend ?? null,
+    },
+  };
+}
+
+function adaptPricing(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const out = {};
+  if (raw.tcgplayer) {
+    const t = adaptTcgplayer(raw.tcgplayer);
+    if (t) out.tcgplayer = t;
+  }
+  if (raw.cardmarket) {
+    const cm = adaptCardmarket(raw.cardmarket);
+    if (cm) out.cardmarket = cm;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
 function mapCardToRow(card, aliasMap) {
+  const pricing = adaptPricing(card.pricing ?? null);
   return {
     id: card.id,
     local_id: card.localId ?? null,
@@ -72,6 +147,9 @@ function mapCardToRow(card, aliasMap) {
     image_url: card.image ?? null,
     legal_standard: card.legal?.standard ?? null,
     legal_expanded: card.legal?.expanded ?? null,
+    pricing:            pricing,
+    pricing_updated_at: pricing ? new Date().toISOString() : null,
+    pricing_source:     pricing ? 'tcgdex' : null,
     last_synced_at: new Date().toISOString(),
   };
 }
