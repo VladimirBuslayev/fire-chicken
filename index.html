@@ -393,8 +393,8 @@ function supaRowToCard(row){
     illustrator:row.illustrator,
     image:row.image_url||null,
     set:{id:row.set_id,name:row.set_name||row.set_id},
-    // pricing column does not exist in Supabase yet; field kept for future compatibility.
-    pricing:null,
+    pricing:row.pricing||null,
+    pricingUpdatedAt:row.pricing_updated_at||null,
     releaseDate:row.release_date||null,
   };
 }
@@ -429,7 +429,7 @@ async function fetchArtistCards(entry){
   const names=[entry.name,...(entry.aliases||[])];
   const ilikeFilters=names.map(n=>`illustrator.ilike.%${n}%`).join(",");
   const{data,error}=await sb.from("cards")
-    .select("id,name,set_id,set_name,local_id,illustrator,image_url,rarity,release_date")
+    .select("id,name,set_id,set_name,local_id,illustrator,image_url,rarity,release_date,pricing,pricing_updated_at")
     .or(ilikeFilters)
     .order("release_date",{ascending:true,nullsFirst:false})
     .order("set_id")
