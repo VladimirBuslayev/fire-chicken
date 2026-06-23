@@ -4,7 +4,7 @@ Last updated: 2026-06-23
 
 ## Current version
 
-Version: v0.1 — single-file MVP
+Version: v0.1.1 — Gate 1 stabilization patch applied
 
 Illustrated is currently deployed at:
 
@@ -67,29 +67,61 @@ Before any refactor or migration, preserve:
 - cache/localStorage behavior
 - GitHub Pages deployment
 
+## Known limitations
+
+### Pricing — intentionally stubbed
+
+Pricing is intentionally not implemented for Supabase-backed artist cards. `supaRowToCard` sets `pricing: null` because no pricing column or pricing table exists in Supabase yet. As a result:
+
+- The card modal always shows "No pricing data" for artist cards
+- TCGPlayer and Cardmarket price display are inactive
+- Price-based sort modes fall back to name sort
+- Price history recording does not run for artist cards
+
+This is a known gap, not a bug. Pricing will be addressed when a Supabase pricing column or dedicated pricing table is introduced. Do not patch around this by hardcoding values or inventing columns.
+
+### Supabase data contract — partially implemented
+
+The following fields are currently selected and mapped in `fetchArtistCards` / `supaRowToCard`:
+
+- `id`, `name`, `set_id`, `set_name`, `local_id`, `illustrator`, `image_url`, `rarity` — selected and mapped
+- `release_date` — selected, ordered by, and now mapped as `releaseDate` (added in v0.1.1)
+- `pricing` — not yet in Supabase; hardcoded `null` in mapping
+
+Fields listed in the architecture data contract but not yet implemented: `source`, `source_card_id`, `artist_id`, `illustrator_raw`, `language`, `variants`, `tcgplayer_url`, `ebay_sold_url`, `price_confidence`.
+
+### Artist alias coverage — unconfirmed
+
+The following aliases have not been confirmed against live Supabase data:
+
+- Saya Tsuruta — full-width Unicode space variant
+- Masakazu Fukuda — typo variant ("Masayuki Fukuda")
+
 ## Known strategic risk
 
 The app is becoming too large and fragile as a single-file MVP.
 
-The next priority is not new features. The next priority is stabilization, documentation, and migration readiness.
+The next priority is not new features. The next priority is continued stabilization, then migration readiness.
 
 ## Current gate
 
 Gate 1 — Stabilize current MVP.
 
-Do not add major new features until the card data contract, Supabase runtime behavior, pricing assumptions, cache behavior, and modal behavior are stable.
+The Gate 1 stabilization patch (v0.1.1) has been merged. The following items from the original audit have been resolved:
 
-## Next technical priority
+- Clear Cache cancel behavior fixed
+- Clear Cache confirm copy corrected
+- `release_date` now mapped as `releaseDate` in `supaRowToCard`
+- `pb_fallback_img_*` keys now purged by Clear Cache
+- Stale TCGdex concurrency comment corrected
 
-Audit and stabilize:
+The following items identified in the audit remain open and are tracked above under Known Limitations:
 
-- `fetchArtistCards`
-- `supaRowToCard`
-- `getBestPrice`
-- card modal assumptions
-- eBay sold link generation
-- cache clearing
-- stale wording about TCGdex/runtime source
+- Pricing is intentionally stubbed pending a Supabase pricing column
+- `cmUrl` computed but not rendered (deferred until pricing is live)
+- Artist alias coverage for Saya Tsuruta and Masakazu Fukuda unconfirmed
+
+Do not add major new features until the Supabase pricing data contract is defined and the remaining open items are resolved or explicitly deferred.
 
 ## Do not do yet
 
@@ -99,3 +131,4 @@ Audit and stabilize:
 - Do not add Japanese cards yet
 - Do not add pricing confidence yet
 - Do not silently invent Supabase columns
+
