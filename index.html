@@ -393,6 +393,9 @@ function supaRowToCard(row){
     illustrator:row.illustrator,
     image:row.image_url||null,
     set:{id:row.set_id,name:row.set_name||row.set_id},
+    // pricing mirrors TCGdex shape: {tcgplayer:{[variant]:{marketPrice,lowPrice,midPrice,highPrice}}, cardmarket:{prices:{...},url}}
+    // Gracefully null if the column does not exist in Supabase yet — getBestPrice and CardModal both handle null safely.
+    pricing:row.pricing||null,
   };
 }
 async function fetchArtistCards(entry){
@@ -426,7 +429,7 @@ async function fetchArtistCards(entry){
   const names=[entry.name,...(entry.aliases||[])];
   const ilikeFilters=names.map(n=>`illustrator.ilike.%${n}%`).join(",");
   const{data,error}=await sb.from("cards")
-    .select("id,name,set_id,set_name,local_id,illustrator,image_url,rarity,release_date")
+    .select("id,name,set_id,set_name,local_id,illustrator,image_url,rarity,release_date,pricing")
     .or(ilikeFilters)
     .order("release_date",{ascending:true,nullsFirst:false})
     .order("set_id")
@@ -1237,7 +1240,7 @@ function SettingsPanel({onClose,onClearCache,onClearManual,onSignOut,hideTcgPock
     <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:300,background:"rgba(7,7,15,0.8)",backdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",padding:"1rem"}}>
       <div className="fade-up" onClick={e=>e.stopPropagation()} style={{background:"#141425",border:"1px solid #1e1e35",borderRadius:16,padding:"1.5rem",maxWidth:380,width:"100%"}}>
         <h3 style={{fontWeight:700,fontSize:"1rem",color:"#e8e8f4",marginBottom:"1.25rem"}}>Settings</h3>
-        <p style={{fontSize:".72rem",color:"#4a4a70",marginBottom:"1rem",lineHeight:1.5}}>Card data is sourced from TCGdex (free, open-source, actively maintained) and cached locally for 24 hours.</p>
+        <p style={{fontSize:".72rem",color:"#4a4a70",marginBottom:"1rem",lineHeight:1.5}}>Artist card display is sourced from a Supabase sync updated weekly from TCGdex. The local cache expires after 24 hours. TCGdex remains the ingestion layer.</p>
         <div onClick={onToggleTcgPocket} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:".75rem",padding:".75rem",marginBottom:"1rem",background:"#0f0f1c",border:"1px solid #1e1e35",borderRadius:10,cursor:"pointer"}}>
           <div>
             <div style={{fontSize:".8rem",color:"#e8e8f4",fontWeight:600}}>Hide TCG Pocket cards</div>
@@ -1250,7 +1253,7 @@ function SettingsPanel({onClose,onClearCache,onClearManual,onSignOut,hideTcgPock
         {onUploadCSV&&<div style={{marginBottom:"1rem",padding:".75rem",background:"#0f0f1c",border:"1px solid #1e1e35",borderRadius:10}}><div style={{fontSize:".8rem",color:"#e8e8f4",fontWeight:600,marginBottom:2}}>Sync Collection</div><div style={{fontSize:".66rem",color:"#4a4a70",marginBottom:".6rem",lineHeight:1.4}}>Upload your Collectr CSV export to update which cards you own.</div><button onClick={()=>{onUploadCSV();onClose();}} className="btn-ghost" style={{width:"100%",borderRadius:8,padding:".45rem",fontSize:".78rem",display:"flex",alignItems:"center",justifyContent:"center",gap:".4rem",color:"#8b6cd8"}}><IcoUpload/> Upload Collectr CSV</button></div>}
         <ShareLinkPanel user={user}/>
         <div style={{display:"flex",flexDirection:"column",gap:".5rem"}}>
-          <button onClick={()=>{if(window.confirm("Clear card cache? Will re-fetch from TCGdex on next load."))onClearCache();onClose();}} className="btn-tap" style={{...btn,background:"#200f18",color:"#f87171"}}>Clear card cache</button>
+          <button onClick={()=>{if(window.confirm("Clear card cache? Will re-fetch from Supabase on next load."))onClearCache();onClose();}} className="btn-tap" style={{...btn,background:"#200f18",color:"#f87171"}}>Clear card cache</button>
           <button onClick={()=>{if(window.confirm("Reset all manual overrides?"))onClearManual();onClose();}} className="btn-tap" style={{...btn,background:"#0f1a20",color:"#60a5fa"}}>Reset all manual overrides</button>
           <button onClick={()=>{onSignOut();onClose();}} className="btn-tap" style={{...btn,background:"#1a1020",color:"#c084fc"}}>Sign out</button>
         </div>
@@ -1517,7 +1520,13 @@ function App(){
     setPriceHistory(prev=>{const n={...prev};if(!n[cardId])n[cardId]=[];if(!n[cardId].find(h=>h.date===date)){n[cardId]=[...n[cardId],{date,price}].slice(-180);if(user)savePricePoint(user.id,cardId,price,date).catch(console.error);}return n;});
   },[user]);
 
-  const clearCache=()=>{ARTISTS.forEach(e=>lsDel(`pb6_cards_${toSlug(e.name)}`));setCardData({});setErrors({});loadAllEntries();};
+  const clearCache=()=>{
+    ARTISTS.forEach(e=>{
+      lsDel(`pb6_cards_${toSlug(e.name)}`);  // old TCGdex cache (pre-Supabase)
+      lsDel(`pb7_supa_${toSlug(e.name)}`);   // current Supabase artist cache
+    });
+    setCardData({});setErrors({});loadAllEntries();
+  };
   const clearManual=async()=>{setManualOwned(new Set());setManualMissing(new Set());if(user)withSync(async()=>{await sb.from("card_overrides").delete().eq("user_id",user.id);});};
   const toggleHideTcgPocket=()=>setHideTcgPocket(v=>{const n=!v;lsSet("pb_hide_tcgp",n);return n;});
   const toggleShowAllColor=()=>setShowAllColor(v=>{const n=!v;lsSet("pb_show_all_color",n);return n;});
