@@ -52,7 +52,7 @@ async function fetchPtcgSet(setId) {
   const cards = [];
 
   while (true) {
-    const url = `${PTCG_BASE}?q=set.id:${setId}&select=id,artist&pageSize=${PAGE_SIZE}&page=${page}`;
+    const url = `${PTCG_BASE}?q=set.id:${setId}&select=id,number,artist&pageSize=${PAGE_SIZE}&page=${page}`;
     const res = await fetch(url, { headers });
 
     if (!res.ok) {
@@ -77,27 +77,29 @@ async function backfillSet(set) {
   const ptcgCards = await fetchPtcgSet(set.ptcgId);
   console.log(`  ${ptcgCards.length} cards returned`);
 
-  // Build a map: id -> artist (only where artist is non-empty)
+  // Build a map: local_id (card number) -> artist.
+  // We use `number` (e.g. "GG19") not the full composite id (e.g. "swsh12pt5-GG19")
+  // because TCGdex and pokemontcg.io use different set ID prefixes.
   const artistMap = {};
   for (const c of ptcgCards) {
-    if (c.id && c.artist) artistMap[c.id] = c.artist;
+    if (c.number && c.artist) artistMap[c.number] = c.artist;
   }
 
-  const ids = Object.keys(artistMap);
-  if (ids.length === 0) {
+  const localIds = Object.keys(artistMap);
+  if (localIds.length === 0) {
     console.log(`  No artist data found — skipping`);
     return { updated: 0, missing: 0 };
   }
 
-  console.log(`  ${ids.length} cards have artist data`);
+  console.log(`  ${localIds.length} cards have artist data`);
 
-  // Fetch which of these IDs exist in Supabase with null illustrator
+  // Fetch null-illustrator rows from Supabase, matching by local_id within the set.
   const { data: supaCards, error: fetchErr } = await sb
     .from("cards")
-    .select("id")
+    .select("id, local_id")
     .eq("set_id", supaId)
     .is("illustrator", null)
-    .in("id", ids);
+    .in("local_id", localIds);
 
   if (fetchErr) {
     console.error(`  Supabase fetch error: ${fetchErr.message}`);
@@ -114,29 +116,28 @@ async function backfillSet(set) {
   // Update in batches of 50
   let updated = 0;
   const BATCH = 50;
-  const toUpdate = supaCards.map((r) => r.id);
 
-  for (let i = 0; i < toUpdate.length; i += BATCH) {
-    const batch = toUpdate.slice(i, i + BATCH);
-    // Update each row individually — upsert requires all NOT NULL columns.
-    for (const id of batch) {
+  for (let i = 0; i < supaCards.length; i += BATCH) {
+    const batch = supaCards.slice(i, i + BATCH);
+    for (const row of batch) {
+      const illustrator = artistMap[row.local_id];
+      if (!illustrator) continue;
       const { error: updateErr } = await sb
         .from("cards")
-        .update({ illustrator: artistMap[id] })
-        .eq("id", id)
+        .update({ illustrator })
+        .eq("id", row.id)
         .is("illustrator", null);
       if (updateErr) {
-        console.error(`  Update error for ${id}: ${updateErr.message}`);
+        console.error(`  Update error for ${row.id}: ${updateErr.message}`);
       } else {
         updated++;
       }
     }
-    process.stdout.write(`  Updated ${updated}/${toUpdate.length}\r`);
+    process.stdout.write(`  Updated ${updated}/${supaCards.length}\r`);
   }
 
-  // Count how many pokemontcg.io IDs had no match in Supabase at all
-  const supaIds = new Set(toUpdate);
-  const missing = ids.filter((id) => !supaIds.has(id)).length;
+  const supaLocalIds = new Set(supaCards.map(r => r.local_id));
+  const missing = localIds.filter(lid => !supaLocalIds.has(lid)).length;
 
   console.log(`\n  Done: ${updated} updated, ${missing} pokemontcg.io cards not in Supabase`);
   return { updated, missing };
