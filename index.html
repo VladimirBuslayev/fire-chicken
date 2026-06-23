@@ -151,6 +151,36 @@ const normNum =n=>(n||"").toString().toLowerCase().trim().replace(/\/.*$/,"").tr
 const normSet =s=>(s||"").toLowerCase().replace(/&/g,"and").replace(/[—–]/g," ").replace(/[^a-z0-9\s]/g,"").replace(/\bpromos?\b/g,"promo").replace(/\s+/g," ").trim();
 const fmt$    =n=>(n!=null&&!isNaN(n))?`$${Number(n).toFixed(2)}`:"—";
 const todayStr=()=>new Date().toISOString().slice(0,10); const parseDateNum=s=>{if(!s)return 0;const p=String(s).split(/[\/\-]/);return(parseInt(p[0]||0)*10000)+(parseInt(p[1]||0)*100)+parseInt(p[2]||0);};
+// ── Chronological set index — replaces parseDateNum() for byDate sorts ──────
+const SET_ORDER={
+  "base1":1,"base2":2,"basep":3,"base3":4,"base4":5,"wp":6,"base5":7,"gym1":8,"gym2":9,
+  "neo1":10,"neo2":11,"si1":12,"neo3":13,"neo4":14,"base6":15,"ecard1":16,"bp":17,"ecard2":18,"ecard3":19,
+  "ex1":20,"ex2":21,"np":22,"ex3":23,"ex4":24,"ex5":25,"pop1":26,"tk1a":27,"tk1b":28,
+  "ex6":29,"ex7":30,"ex8":31,"ex9":32,"pop2":33,"ex10":34,"ex11":35,"ex12":36,"pop3":37,
+  "tk2a":38,"tk2b":39,"ex13":40,"ex14":41,"pop4":42,"ex15":43,"ex16":44,
+  "dpp":45,"dp1":46,"pop5":47,"dp2":48,"dp3":49,"pop6":50,"dp4":51,"dp5":52,"pop7":53,"dp6":54,"dp7":55,
+  "pl1":56,"pop8":57,"pl2":58,"pl3":59,"pop9":60,"ru1":61,"pl4":62,
+  "hgss1":63,"hsp":64,"hgss2":65,"hgss3":66,"hgss4":67,"col1":68,
+  "bwp":69,"bw1":70,"mcd11":71,"bw2":72,"bw3":73,"bw4":74,"bw5":75,"bw6":76,"mcd12":77,"dv1":78,
+  "bw7":79,"bw8":80,"bw9":81,"bw10":82,"bw11":83,
+  "xyp":84,"xy0":85,"xy1":86,"xy2":87,"xy3":88,"mcd14":89,"xy4":90,"xy5":91,"mcd15":92,
+  "dc1":93,"xy6":94,"xy7":95,"xy8":96,"mcd16":97,"xy9":98,"g1":99,"xy10":100,"xy11":101,"xy12":102,
+  "smp":103,"sm1":104,"mcd17":105,"sm2":106,"sm3":107,"sm35":108,"sm4":109,"sm5":110,"sm6":111,
+  "sm7":112,"sm75":113,"mcd18":114,"sm8":115,"sm9":116,"det1":117,"sm10":118,"mcd19":119,
+  "sm11":120,"sm115":121,"sma":122,"sm12":123,
+  "swshp":124,"swsh1":125,"swsh2":126,"swsh3":127,"swsh35":128,"fut20":129,"swsh4":130,"mcd21":131,
+  "swsh45sv":132,"swsh45":133,"swsh5":134,"swsh6":135,"swsh7":136,"cel25c":137,"cel25":138,
+  "swsh8":139,"swsh9":140,"swsh9tg":141,"swsh10":142,"swsh10tg":143,"pgo":144,
+  "swsh11":145,"swsh11tg":146,"tot22":147,"mcd22":148,"swsh12":149,"swsh12tg":150,
+  "swsh12pt5gg":151,"swsh12pt5":152,
+  "svp":153,"sv1":154,"sve":155,"sv2":156,"sv3":157,"sv3pt5":158,"tot23":159,"sv4":160,"sv4pt5":161,
+  "sv5":162,"sv6":163,"sv6pt5":164,"sv7":165,"tot24":166,"sv8":167,"sv8pt5":168,
+  "sv9":169,"sv10":170,"rsv10pt5":171,"zsv10pt5":172,
+  "mep":173,"me1":174,"me2":175,"me2pt5":176,"me3":177,"me4":178,
+  "tcgppa":179,"tcgp1":180,"tcgp1a":181,"tcgpa2":182,"tcgpa2a":183,"tcgpa2b":184,
+  "tcgpa3":185,"tcgpa3a":186,"tcgpa3b":187,"tcgpa4":188,"tcgpa4a":189,"tcgpa4b":190,
+  "tcgppb":191,"tcgpb1":192,"tcgpb1a":193,"tcgpb2":194,"tcgpb2a":195,"tcgpb2b":196,
+};
 
 const makeKeys=(cn,num,sn)=>{const n=normName(cn);if(!n)return[];const k=[];const nu=normNum(num);if(nu)k.push(n+"::num::"+nu);const s=normSet(sn);if(s)k.push(n+"::set::"+s);return k;};
 const isCardOwned=(card,ownedKeySet,mo,mm)=>{if(mm.has(card.id))return false;if(mo.has(card.id))return true;return makeKeys(card.name||"",card.localId||"",card.set&&card.set.name||"").some(k=>ownedKeySet.has(k));};
@@ -180,7 +210,7 @@ const sortCards=(arr,sortBy,checkOwned)=>{
   if(!arr||!arr.length)return arr;const a2=arr.slice();
   const priceOf=c=>{const p=getBestPrice(c);return p?p.amount:null;};
   const byName=(a,b)=>(a.name||"").localeCompare(b.name||"");
-  const byDate=(a,b)=>{const ad=a.set&&a.set.releaseDate,bd=b.set&&b.set.releaseDate;if(!ad&&!bd)return byName(a,b);if(!ad)return 1;if(!bd)return -1;const da=parseDateNum(ad),db=parseDateNum(bd);return da===db?byName(a,b):da-db;};
+  const byDate=(a,b)=>{const oa=SET_ORDER[a.set&&a.set.id]??999,ob=SET_ORDER[b.set&&b.set.id]??999;return oa===ob?byName(a,b):oa-ob;};
   switch(sortBy){
     case"price-desc":return a2.sort((a,b)=>{const pa=priceOf(a),pb=priceOf(b);if(pa===null&&pb===null)return byName(a,b);if(pa===null)return 1;if(pb===null)return-1;return pb-pa||byName(a,b);});
     case"price-asc": return a2.sort((a,b)=>{const pa=priceOf(a),pb=priceOf(b);if(pa===null&&pb===null)return byName(a,b);if(pa===null)return 1;if(pb===null)return-1;return pa-pb||byName(a,b);});
@@ -662,6 +692,9 @@ function PriceChart({history}){
 function CardModal({card,owned,manualOwned,manualMissing,isFavorite,priceHistory,onToggleManual,onToggleFavorite,onRecordPrice,onClose,readOnly}){
   const price=getBestPrice(card);
   const allVariants=card&&card.pricing&&card.pricing.tcgplayer?card.pricing.tcgplayer:{};
+  const cmPrices=card&&card.pricing&&card.pricing.cardmarket&&card.pricing.cardmarket.prices?card.pricing.cardmarket.prices:null;
+  const cmTrend=cmPrices?(cmPrices.trendPrice??cmPrices.averageSellPrice??null):null;
+  const cmUrl=card&&card.pricing&&card.pricing.cardmarket?card.pricing.cardmarket.url:null;
   const isManualOwned  =manualOwned.has(card.id);
   const isManualMissing=manualMissing.has(card.id);
   const cardHistory=priceHistory[card.id]||[];
@@ -672,6 +705,7 @@ function CardModal({card,owned,manualOwned,manualMissing,isFavorite,priceHistory
   const lg=imgLarge(card);
   const[modalFallback,setModalFallback]=useState(undefined);
   const[modalLimitlessFailed,setModalLimitlessFailed]=useState(false);
+  const[zoomed,setZoomed]=useState(false);
   useEffect(()=>{
     setModalFallback(undefined);
     setModalLimitlessFailed(false);
@@ -707,7 +741,7 @@ function CardModal({card,owned,manualOwned,manualMissing,isFavorite,priceHistory
 
         <div style={{display:"flex",gap:"1rem",marginBottom:"1.25rem"}}>
           <div style={{flexShrink:0,width:128}}>
-            {displayLg?<img src={displayLg} alt={card.name} style={{width:"100%",borderRadius:8}} onError={sourceTier==="limitless"?()=>setModalLimitlessFailed(true):undefined}/>:<div className="card-blank" style={{borderRadius:8}}><div className="blank-inner">{!lg&&modalFallback===undefined?<IcoSpin size={26}/>:<IcoNoImage size={26}/>}<span style={{fontSize:".68rem"}}>{!lg&&modalFallback===undefined?"Checking for an image…":<>No image available<br/>for this card</>}</span></div></div>}
+            {displayLg?<img src={displayLg} alt={card.name} onClick={()=>setZoomed(true)} style={{width:"100%",borderRadius:8,cursor:"zoom-in"}} onError={sourceTier==="limitless"?()=>setModalLimitlessFailed(true):undefined}/>:<div className="card-blank" style={{borderRadius:8}}><div className="blank-inner">{!lg&&modalFallback===undefined?<IcoSpin size={26}/>:<IcoNoImage size={26}/>}<span style={{fontSize:".68rem"}}>{!lg&&modalFallback===undefined?"Checking for an image…":<>No image available<br/>for this card</>}</span></div></div>}
             {sourceTier==="ptcgio"&&<div style={{fontSize:".6rem",color:"#4a4a70",marginTop:4,textAlign:"center"}}>Image via Pokémon TCG API archive (TCGdex has none for this card)</div>}
             {sourceTier==="limitless"&&<div style={{fontSize:".6rem",color:"#4a4a70",marginTop:4,textAlign:"center"}}>Image via Limitless TCG — unverified match, TCGdex has none for this card</div>}
           </div>
@@ -732,6 +766,13 @@ function CardModal({card,owned,manualOwned,manualMissing,isFavorite,priceHistory
                 </div>
               </div>
             ):<div style={{fontSize:".78rem",color:"#6b6b90"}}>No pricing data</div>}
+            {cmTrend!=null&&(
+              <div style={{marginTop:".5rem",paddingTop:".5rem",borderTop:"1px solid #1e1e35"}}>
+                <div style={{fontSize:".68rem",color:"#6b6b90"}}>Cardmarket Trend</div>
+                <div style={{fontSize:"1.1rem",fontWeight:700,color:"#5b9dd8",letterSpacing:"-.01em"}}>€{cmTrend.toFixed(2)}</div>
+                {cmPrices.lowPrice!=null&&<div style={{fontSize:".68rem",color:"#6b6b90"}}>Low <span style={{color:"#9b9bc0"}}>€{cmPrices.lowPrice.toFixed(2)}</span></div>}
+              </div>
+            )}
           </div>
         </div>
 
@@ -766,6 +807,12 @@ function CardModal({card,owned,manualOwned,manualMissing,isFavorite,priceHistory
         </div>
       </div>
     </div>
+    {zoomed&&displayLg&&(
+      <div onClick={()=>setZoomed(false)} style={{position:"fixed",inset:0,zIndex:400,background:"rgba(0,0,0,0.95)",display:"flex",alignItems:"center",justifyContent:"center",padding:"1rem",cursor:"zoom-out"}}>
+        <img src={displayLg} alt={card.name} style={{maxWidth:"min(96vw,700px)",maxHeight:"92dvh",width:"auto",height:"auto",borderRadius:12,boxShadow:"0 0 60px rgba(139,108,216,0.25)"}} onClick={e=>e.stopPropagation()}/>
+        <button onClick={()=>setZoomed(false)} style={{position:"absolute",top:"1rem",right:"1rem",background:"rgba(255,255,255,0.1)",border:"none",color:"#fff",borderRadius:"50%",width:36,height:36,cursor:"pointer",fontSize:"1.1rem",display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+      </div>
+    )}
   );
 }
 
@@ -776,7 +823,7 @@ function ArtistSection({entry,cards,checkOwned,manualOwned,manualMissing,favorit
   const[showFact,setShowFact]=useState(false);
   const fact=ARTIST_FACTS[entry.name];
   const displayCards=useMemo(()=>{let arr=cards;if(searchQuery){const q=searchQuery.toLowerCase();arr=arr.filter(c=>(c.name||"").toLowerCase().includes(q));}return sortCards(arr,sortBy,checkOwned);},[cards,searchQuery,sortBy,checkOwned]);
-  const groupedBySet=useMemo(()=>{if(!viewMode)return null;const filtered=searchQuery?cards.filter(c=>(c.name||"").toLowerCase().includes(searchQuery.toLowerCase())):cards;const missingCards=filtered.filter(c=>!checkOwned(c));const ownedCards=filtered.filter(c=>checkOwned(c));const bySet=list=>{const groups=new Map();list.forEach(card=>{const sid=(card.set&&card.set.id)||"unknown",sname=(card.set&&card.set.name)||"Unknown Set",sdate=(card.set&&card.set.releaseDate)||"0000/00/00";if(!groups.has(sid))groups.set(sid,{name:sname,date:sdate,cards:[]});groups.get(sid).cards.push(card);});groups.forEach(g=>{g.cards.sort((a,b)=>(a.name||"").localeCompare(b.name||""));});return Array.from(groups.values()).sort((a,b)=>{const da=parseDateNum(a.date),db=parseDateNum(b.date);if(sortBy==="date-desc")return da===db?(a.name||"").localeCompare(b.name||""):db-da;if(da!==db)return sortBy==="date-desc"?db-da:da-db;return(a.id||a.name||"").localeCompare(b.id||b.name||"");});};return{missing:bySet(missingCards),owned:bySet(ownedCards),missingCount:missingCards.length,ownedCount:ownedCards.length};},[cards,searchQuery,sortBy,viewMode,checkOwned]);
+  const groupedBySet=useMemo(()=>{if(!viewMode)return null;const filtered=searchQuery?cards.filter(c=>(c.name||"").toLowerCase().includes(searchQuery.toLowerCase())):cards;const missingCards=filtered.filter(c=>!checkOwned(c));const ownedCards=filtered.filter(c=>checkOwned(c));const bySet=list=>{const groups=new Map();list.forEach(card=>{const sid=(card.set&&card.set.id)||"unknown",sname=(card.set&&card.set.name)||"Unknown Set";if(!groups.has(sid))groups.set(sid,{id:sid,name:sname,cards:[]});groups.get(sid).cards.push(card);});groups.forEach(g=>{if(sortBy==="price-desc"){g.cards.sort((a,b)=>{const pa=getBestPrice(a),pb=getBestPrice(b);if(!pa&&!pb)return(a.name||"").localeCompare(b.name||"");if(!pa)return 1;if(!pb)return-1;return pb.amount-pa.amount;});}else if(sortBy==="price-asc"){g.cards.sort((a,b)=>{const pa=getBestPrice(a),pb=getBestPrice(b);if(!pa&&!pb)return(a.name||"").localeCompare(b.name||"");if(!pa)return 1;if(!pb)return-1;return pa.amount-pb.amount;});}else{g.cards.sort((a,b)=>(a.name||"").localeCompare(b.name||""));}});return Array.from(groups.values()).sort((a,b)=>{const oa=SET_ORDER[a.id]??999,ob=SET_ORDER[b.id]??999;if(sortBy==="date-desc")return oa===ob?(a.name||"").localeCompare(b.name||""):ob-oa;return oa===ob?(a.name||"").localeCompare(b.name||""):oa-ob;});};return{missing:bySet(missingCards),owned:bySet(ownedCards),missingCount:missingCards.length,ownedCount:ownedCards.length};},[cards,searchQuery,sortBy,viewMode,checkOwned]);
   const ownedCount=useMemo(()=>cards.filter(checkOwned).length,[cards,checkOwned]);
   const pct=cards.length?Math.round((ownedCount/cards.length)*100):0;
   const complete=pct===100&&cards.length>0;
@@ -1176,7 +1223,7 @@ function App(){
     return()=>subscription.unsubscribe();
   },[]);
 
-  const handleSendLink=async email=>{const{error}=await sb.auth.signInWithOtp({email,options:{emailRedirectTo:REDIRECT}});if(error)throw error;};
+  const handleSendLink=async email=>{const{error}=await sb.auth.signInWithOtp({email,options:{shouldCreateUser:true}});if(error)throw error;};
   const handleVerifyCode=async(email,token)=>{const{error}=await sb.auth.verifyOtp({email,token,type:"email"});if(error)throw error;};
   const handleSignOut=()=>sb.auth.signOut();
 
