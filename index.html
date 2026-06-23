@@ -395,6 +395,7 @@ function supaRowToCard(row){
     set:{id:row.set_id,name:row.set_name||row.set_id},
     // pricing column does not exist in Supabase yet; field kept for future compatibility.
     pricing:null,
+    releaseDate:row.release_date||null,
   };
 }
 async function fetchArtistCards(entry){
@@ -1252,7 +1253,7 @@ function SettingsPanel({onClose,onClearCache,onClearManual,onSignOut,hideTcgPock
         {onUploadCSV&&<div style={{marginBottom:"1rem",padding:".75rem",background:"#0f0f1c",border:"1px solid #1e1e35",borderRadius:10}}><div style={{fontSize:".8rem",color:"#e8e8f4",fontWeight:600,marginBottom:2}}>Sync Collection</div><div style={{fontSize:".66rem",color:"#4a4a70",marginBottom:".6rem",lineHeight:1.4}}>Upload your Collectr CSV export to update which cards you own.</div><button onClick={()=>{onUploadCSV();onClose();}} className="btn-ghost" style={{width:"100%",borderRadius:8,padding:".45rem",fontSize:".78rem",display:"flex",alignItems:"center",justifyContent:"center",gap:".4rem",color:"#8b6cd8"}}><IcoUpload/> Upload Collectr CSV</button></div>}
         <ShareLinkPanel user={user}/>
         <div style={{display:"flex",flexDirection:"column",gap:".5rem"}}>
-          <button onClick={()=>{if(window.confirm("Clear card cache? Will re-fetch from Supabase on next load."))onClearCache();onClose();}} className="btn-tap" style={{...btn,background:"#200f18",color:"#f87171"}}>Clear card cache</button>
+          <button onClick={()=>{if(window.confirm("Clear card cache? Cards will be re-fetched from Supabase immediately.")){onClearCache();onClose();}}} className="btn-tap" style={{...btn,background:"#200f18",color:"#f87171"}}>Clear card cache</button>
           <button onClick={()=>{if(window.confirm("Reset all manual overrides?"))onClearManual();onClose();}} className="btn-tap" style={{...btn,background:"#0f1a20",color:"#60a5fa"}}>Reset all manual overrides</button>
           <button onClick={()=>{onSignOut();onClose();}} className="btn-tap" style={{...btn,background:"#1a1020",color:"#c084fc"}}>Sign out</button>
         </div>
@@ -1479,7 +1480,7 @@ function App(){
   },[]);
   // Load artists in small concurrent groups rather than firing all 21 (and their
   // batched per-card fetches) at once — a full burst can spike to 150-200+
-  // simultaneous requests to TCGdex and risks silent throttling.
+  // simultaneous Supabase queries and risks connection pool pressure.
   const ARTIST_CONCURRENCY=4;
   const loadAllEntries=useCallback(async()=>{
     for(let i=0;i<ARTISTS.length;i+=ARTIST_CONCURRENCY){
@@ -1524,6 +1525,9 @@ function App(){
       lsDel(`pb6_cards_${toSlug(e.name)}`);  // old TCGdex cache
       lsDel(`pb7_supa_${toSlug(e.name)}`);   // current Supabase cache
     });
+    // Purge per-card fallback image cache so stale "not found" results
+    // don't persist after TCGdex gains images for previously imageless cards.
+    Object.keys(localStorage).filter(k=>k.startsWith("pb_fallback_img_")).forEach(k=>lsDel(k));
     setCardData({});setErrors({});loadAllEntries();
   };
   const clearManual=async()=>{setManualOwned(new Set());setManualMissing(new Set());if(user)withSync(async()=>{await sb.from("card_overrides").delete().eq("user_id",user.id);});};
