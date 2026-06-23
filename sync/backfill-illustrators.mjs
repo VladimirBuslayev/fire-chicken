@@ -28,20 +28,17 @@ const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
 // Sets confirmed to have 0 illustrators in Supabase (from diagnostic query).
 // Add or remove set IDs here as needed.
+// Map of our Supabase set_id -> pokemontcg.io set id (they differ for some sets).
 const NULL_SETS = [
-  "swsh9",
-  "swsh10",
-  "swsh10.5",
-  "swsh11",
-  "swsh12",
-  "swsh12.5",
-  "mee",
-  "ru1",
-  "sve",
-  // tk- sets — lower priority, mostly Japanese promos
-  // "tk-bw-e", "tk-bw-z", "tk-sm-l", "tk-sm-r",
-  // "tk-xy-b", "tk-xy-latia", "tk-xy-latio",
-  // "tk-xy-n", "tk-xy-p", "tk-xy-su", "tk-xy-sy", "tk-xy-w",
+  { supaId: "swsh9",    ptcgId: "swsh9"    },
+  { supaId: "swsh10",   ptcgId: "swsh10"   },
+  { supaId: "swsh10.5", ptcgId: "swsh45"   }, // pokemontcg.io calls this swsh45
+  { supaId: "swsh11",   ptcgId: "swsh11"   },
+  { supaId: "swsh12",   ptcgId: "swsh12"   },
+  { supaId: "swsh12.5", ptcgId: "swsh12pt5" }, // pokemontcg.io calls this swsh12pt5
+  { supaId: "mee",      ptcgId: "mee"      },
+  { supaId: "ru1",      ptcgId: "ru1"      },
+  { supaId: "sve",      ptcgId: "sve"      },
 ];
 
 const PTCG_BASE = "https://api.pokemontcg.io/v2/cards";
@@ -74,9 +71,10 @@ async function fetchPtcgSet(setId) {
   return cards;
 }
 
-async function backfillSet(setId) {
-  console.log(`\n[${setId}] Fetching from pokemontcg.io...`);
-  const ptcgCards = await fetchPtcgSet(setId);
+async function backfillSet(set) {
+  const { supaId, ptcgId } = set;
+  console.log(`\n[${supaId}] Fetching from pokemontcg.io (ptcg id: ${ptcgId})...`);
+  const ptcgCards = await fetchPtcgSet(set.ptcgId);
   console.log(`  ${ptcgCards.length} cards returned`);
 
   // Build a map: id -> artist (only where artist is non-empty)
@@ -97,7 +95,7 @@ async function backfillSet(setId) {
   const { data: supaCards, error: fetchErr } = await sb
     .from("cards")
     .select("id")
-    .eq("set_id", setId)
+    .eq("set_id", supaId)
     .is("illustrator", null)
     .in("id", ids);
 
@@ -120,19 +118,20 @@ async function backfillSet(setId) {
 
   for (let i = 0; i < toUpdate.length; i += BATCH) {
     const batch = toUpdate.slice(i, i + BATCH);
-    const updates = batch.map((id) => ({ id, illustrator: artistMap[id] }));
-
-    // Upsert using id as the conflict key
-    const { error: upsertErr } = await sb
-      .from("cards")
-      .upsert(updates, { onConflict: "id", ignoreDuplicates: false });
-
-    if (upsertErr) {
-      console.error(`  Upsert error (batch ${i / BATCH + 1}): ${upsertErr.message}`);
-    } else {
-      updated += batch.length;
-      process.stdout.write(`  Updated ${updated}/${toUpdate.length}\r`);
+    // Update each row individually — upsert requires all NOT NULL columns.
+    for (const id of batch) {
+      const { error: updateErr } = await sb
+        .from("cards")
+        .update({ illustrator: artistMap[id] })
+        .eq("id", id)
+        .is("illustrator", null);
+      if (updateErr) {
+        console.error(`  Update error for ${id}: ${updateErr.message}`);
+      } else {
+        updated++;
+      }
     }
+    process.stdout.write(`  Updated ${updated}/${toUpdate.length}\r`);
   }
 
   // Count how many pokemontcg.io IDs had no match in Supabase at all
@@ -145,12 +144,12 @@ async function backfillSet(setId) {
 
 async function main() {
   console.log("=== Illustrator Backfill ===");
-  console.log(`Sets to process: ${NULL_SETS.join(", ")}\n`);
+  console.log(`Sets to process: ${NULL_SETS.map(s=>s.supaId).join(", ")}\n`);
 
   let totalUpdated = 0;
 
-  for (const setId of NULL_SETS) {
-    const { updated } = await backfillSet(setId);
+  for (const set of NULL_SETS) {
+    const { updated } = await backfillSet(set);
     totalUpdated += updated;
     // Polite pause between sets to avoid rate limiting
     await new Promise((r) => setTimeout(r, 500));
