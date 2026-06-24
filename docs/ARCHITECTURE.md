@@ -85,6 +85,16 @@ The `sync-cards.mjs` script is responsible for:
 
 The frontend should never contain logic that compensates for TCGdex's upstream field names or structure.
 
+## Backend RPC dependencies
+
+The frontend calls one Supabase RPC in addition to direct table/view queries:
+
+| RPC | Signature | Used by |
+|---|---|---|
+| `get_shared_collection` | `p_token TEXT` | `fetchSharedCollection` — share/binder read path |
+
+This RPC powers the public shared binder view. It must be preserved during Gate 2 migration. Its internal schema is not known from the frontend source; do not assume column shape without consulting the Supabase function definition directly.
+
 ## Future database direction
 
 Likely core tables:
@@ -133,4 +143,3 @@ Expected service separation:
 Do not migrate to Vite until the current MVP behavior is stable.
 
 The first migration should preserve user-facing behavior rather than redesigning or adding features.
-
