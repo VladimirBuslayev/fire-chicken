@@ -1,182 +1,214 @@
-# Illustrated — Changelog
+# Illustrated — Current State
 
-## v0.1.4 — Gate 1 illustrator enrichment read-model
+Last updated: 2026-06-23
 
-Date: 2026-06-23
+## Current version
 
-Status: SQL written and ready; pending Supabase deployment, seed-row insertion, frontend switch, and live validation.
+Version: v0.1.4 — Gate 1 enrichment read-model (deployed and validated)
 
-### Problem
+Illustrated is currently deployed at:
 
-Six complete set ranges — swsh9 through swsh12.5 — have `illustrator: null` in Supabase. This is a TCGdex data gap, not a sync bug. The cards exist with correct images, names, and pricing. Because the frontend artist page query uses `illustrator.ilike.%name%`, null-illustrator cards are invisible on all artist pages. Named high-value cards affected include Giratina and Altaria cards from Lost Origin, Silver Tempest, and Crown Zenith.
+https://illustratedvault.com
 
-### Solution
+The app is still primarily built from a single `index.html` file, with a supporting `sw.js` service worker, GitHub Pages deployment, and sync scripts.
 
-A two-layer read-model was introduced:
+## Current repo structure
 
-- `card_extras` — a new Supabase table that holds manual editorial corrections. The sync script never touches it.
-- `cards_effective` — a new Supabase view that LEFT JOINs `cards` and `card_extras`, exposing `COALESCE(card_extras.illustrator_override, cards.illustrator) AS illustrator`. The frontend queries this view instead of `cards` directly.
+- `.github/workflows/` — GitHub Actions workflows
+- `sync/` — data sync / backfill scripts
+- `CNAME` — custom domain configuration
+- `README.md` — basic repo readme
+- `index.html` — main single-file app
+- `sw.js` — service worker
 
-`cards` remains the raw, sync-owned source of truth for TCGdex data. `card_extras` is the editorial layer. The view is the frontend's runtime read surface.
+## Product direction
 
-### `card_extras` table
+Illustrated is a premium visual archive and collection companion for Pokémon card collectors.
 
-New table with columns:
+The differentiator is artist-first and artwork-first browsing, not simply price tracking.
 
-- `card_id TEXT PRIMARY KEY REFERENCES cards(id) ON DELETE CASCADE`
-- `illustrator_override TEXT`
-- `source_note TEXT`
-- `created_at TIMESTAMPTZ DEFAULT now()`
-- `updated_at TIMESTAMPTZ DEFAULT now()`
+The product should feel:
 
-FK with ON DELETE CASCADE is safe because the sync script uses upsert-only writes and never truncates or recreates the `cards` table.
+- premium
+- calm
+- visual
+- curated
+- collector-focused
+- less gaming UI
+- more archive / vault / gallery
 
-anon and authenticated roles have SELECT only. No INSERT/UPDATE/DELETE granted. Manual enrichment is performed via the Supabase table editor using service-role access.
+Pricing is present as buying guidance and should always be treated as a reference, not an authority. Illustrated Vault is not a price tracker.
 
-### `cards_effective` view
+## Current architecture
 
-Created with `security_invoker = true` (PostgreSQL 15+). Exposes the same column set and names as the `cards` table, with the single difference that `illustrator` is resolved via COALESCE. SELECT granted to anon and authenticated.
+Current state:
 
-The PostgREST ilike OR filter used by `fetchArtistCards` — `illustrator.ilike.%name%` — evaluates correctly against the COALESCE expression in the view. No query logic changes were needed.
+- Single-file MVP: yes
+- Frontend runtime: `index.html`
+- Deployment: GitHub Pages
+- Domain: `illustratedvault.com`
+- Database: Supabase
+- External card source: TCGdex
+- Intended direction: TCGdex as ingestion/sync source; Supabase as runtime source of truth
+- Frontend read surface: `cards_effective` view (live)
 
-### Frontend change (`index.html`)
+## Working features
 
-One string substitution in `fetchArtistCards`:
+- Artist pages — sourced from Supabase via `cards_effective`
+- Card grid with owned/missing states
+- Card modal with full image, rarity, artist, set
+- TCGPlayer Market price, Low / Mid / High breakdown
+- All Variants pricing section (multi-variant cards)
+- Cardmarket Trend section (where data exists)
+- $↓ and $↑ price sort modes
+- Price history recording per card per user
+- CSV import (Collectr export)
+- Manual owned/missing overrides
+- Bookmarks / Most Wanted list
+- Share / binder view
+- Image fallback logic (pokemontcg.io archive, Limitless TCG)
+- eBay sold links
+- Cache / localStorage behavior
+- GitHub Pages deployment
 
-```js
-// Before:
-sb.from("cards")
+## Supabase objects — current state
 
-// After:
-sb.from("cards_effective")
-```
+### Tables
 
-`supaRowToCard` is unchanged. The view exposes identical column names, so the mapping is column-name-compatible without modification. The `illustrator` field on the card object now contains the COALESCE result — either the override or the raw TCGdex value — with no frontend awareness of which source won.
+| Table | Owner | Written by | Purpose |
+|---|---|---|---|
+| `cards` | sync pipeline | `sync-cards.mjs` upsert | Raw TCGdex card data; source of truth for sync |
+| `card_extras` | editorial | Manual (table editor) | Illustrator overrides and other manual corrections |
+| `artists` | admin | Manual | Artist canonical names, aliases, metadata |
+| `user_collection` | app | Frontend | Per-user owned card key set |
+| `card_overrides` | app | Frontend | Per-user force-owned / force-missing |
+| `price_history` | app | Frontend | Per-user price point log |
+| `card_favorites` | app | Frontend | Per-user bookmarks |
+| `share_links` | app | Frontend | Public binder share tokens |
 
-### What this does not do
+### Views
 
-- Bulk-enrich all null-illustrator cards across swsh9–swsh12.5. That is a separate data-quality pass, tracked in Known Follow-up Items. The schema and view support it without modification.
-- Add a frontend override map or any client-side awareness of `card_extras`.
-- Change the sync script.
+| View | Source tables | Purpose |
+|---|---|---|
+| `cards_effective` | `cards` LEFT JOIN `card_extras` | Frontend read surface; exposes COALESCE(illustrator_override, illustrator) |
 
----
+### View access
 
-## v0.1.3 — Pricing Phase 2: frontend activation
+`cards_effective` is live with `security_invoker = true`. anon and authenticated roles have SELECT. No INSERT/UPDATE/DELETE is possible on a non-updatable view. `card_extras` has RLS enabled with a SELECT-only policy for anon/authenticated; write access is service-role only.
 
-Date: 2026-06-23
+### card_extras — verified seed rows
 
-Merged: yes
+Five high-priority cards in the null-illustrator set ranges were verified and inserted as of v0.1.4:
 
-### `fetchArtistCards` — `pricing` and `pricing_updated_at` added to Supabase select
+| Card ID | Card name | Illustrator override | Notes |
+|---|---|---|---|
+| `swsh11-185` | Giratina V | N-DESIGN Inc. | TCGdex null for swsh11; verified at card ID level |
+| `swsh11-186` | Giratina V | Shinji Kanda | TCGdex null for swsh11; verified at card ID level |
+| `swsh12-TG11` | Altaria | Yuu Nishida | TCGdex null for swsh12; verified (corrected from initial wrong assignment) |
+| `swsh12.5-GG19` | Altaria | Asako Ito | TCGdex null for swsh12.5; verified at card ID level |
+| `swsh12.5-GG69` | Giratina VSTAR | Akira Egawa | TCGdex null for swsh12.5; verified (corrected from initial wrong assignment) |
 
-The Supabase `.select()` string in `fetchArtistCards` now includes `pricing` and `pricing_updated_at`. These fields were already present in the `cards` table following the Phase 1 schema migration; this change routes them to the frontend.
+All remaining null-illustrator cards across swsh9–swsh12.5 are a separate follow-up data-quality pass (see Known follow-up items).
 
-### `supaRowToCard` — pricing stub replaced with live mapping
+## Supabase data contract — current status
 
-The `pricing: null` stub (and its accompanying "does not exist in Supabase yet" comment) has been replaced with `pricing: row.pricing || null`. The field `pricingUpdatedAt: row.pricing_updated_at || null` has also been added and is available for future use.
+The frontend selects from `cards_effective`. Column shapes are identical to `cards`; `supaRowToCard` required no changes when the switch was made.
 
-No other changes to `supaRowToCard`, `getBestPrice`, the modal, or price sort logic were needed. All pricing UI was already written against the correct shape — it was dormant because pricing was always `null`. Opening the data gate was the only change required.
+| Column | Source | Selected by frontend | Notes |
+|---|---|---|---|
+| `id` | `cards` | yes | — |
+| `name` | `cards` | yes | — |
+| `set_id` | `cards` | yes | — |
+| `set_name` | `cards` | yes | — |
+| `local_id` | `cards` | yes | — |
+| `illustrator` | `COALESCE(card_extras.illustrator_override, cards.illustrator)` | yes | View resolves the best available value |
+| `image_url` | `cards` | yes | — |
+| `rarity` | `cards` | yes | — |
+| `release_date` | `cards` | yes | Mapped as `releaseDate` |
+| `pricing` | `cards` | yes | JSONB; adapted from TCGdex at sync time |
+| `pricing_updated_at` | `cards` | yes | Mapped as `pricingUpdatedAt`; not yet rendered |
 
-### Live validation results
+Pricing coverage: 19,415 of 23,314 cards have pricing data (83%).
 
-Manual validation confirmed across artist cards:
+## Known limitations
 
-- TCGPlayer Market price displays in the card modal
-- Low / Mid / High breakdown displays
-- All Variants section displays for multi-variant cards
-- Cardmarket Trend section displays where Cardmarket data exists
-- $↓ and $↑ price sort modes work; unpriced cards sort to the end
-- Cards with no pricing data (WotC-era and others) still show "No pricing data" cleanly
-- Owned/missing state, manual overrides, favorites, eBay links, and share/binder view unaffected
+### Null illustrator — enrichment read-model live; bulk data-quality pass pending
 
-### Pricing framing note
+Six set ranges have `illustrator: null` in the `cards` table due to a TCGdex data gap:
 
-Pricing in Illustrated Vault is buying guidance, not a price authority. TCGPlayer Market is displayed as a reference point. For buying decisions, the eBay Sold link remains important for verification against recent actual sales. Confidence labels, price alerts, Cardmarket link button, and price history analytics remain deferred.
+- swsh9 (Brilliant Stars)
+- swsh10 (Astral Radiance)
+- swsh10.5 (Pokémon GO promo)
+- swsh11 (Lost Origin)
+- swsh12 (Silver Tempest)
+- swsh12.5 (Crown Zenith)
 
----
+The `card_extras` table and `cards_effective` view are deployed and validated. Five high-priority seed rows were verified and inserted (see card_extras — verified seed rows above). Those corrected cards now appear on the correct artist pages. The remaining null-illustrator cards across those six sets are a separate data-quality pass tracked in Known follow-up items.
 
-## v0.1.2 — Pricing Phase 1: schema and sync adapter
+### Pricing — framing and scope
 
-Date: 2026-06-23
+Pricing reflects TCGPlayer market data sourced through TCGdex, updated weekly by the sync pipeline. It is buying guidance, not a price authority.
 
-Merged: yes
+The following pricing features remain deferred:
 
-### Supabase schema — three nullable columns added to `cards`
+- Pricing confidence labels
+- Price staleness display (`pricingUpdatedAt` is mapped but not rendered)
+- Cardmarket link button (`cmUrl` is computed in the modal but not rendered)
+- Price alerts and watchlists
+- Advanced price history analytics
 
-```sql
-ALTER TABLE cards
-  ADD COLUMN IF NOT EXISTS pricing            JSONB        DEFAULT NULL,
-  ADD COLUMN IF NOT EXISTS pricing_updated_at TIMESTAMPTZ  DEFAULT NULL,
-  ADD COLUMN IF NOT EXISTS pricing_source     TEXT         DEFAULT NULL;
-```
+### Artist alias coverage — unconfirmed
 
-All columns are nullable. Existing rows were unaffected by the migration.
+The following aliases have not been confirmed against live Supabase data:
 
-### `sync-cards.mjs` — pricing adapter added
+- Saya Tsuruta — full-width Unicode space variant
+- Masakazu Fukuda — typo variant ("Masayuki Fukuda")
 
-Three adapter functions were added before `mapCardToRow`:
+## Known follow-up items
 
-- `adaptTcgplayer(raw)` — normalizes TCGdex's flat TCGPlayer pricing object. Renames known variant keys (`holo` → `holofoil`, `reverse` → `reverse-holofoil`); passes unknown keys through unchanged. Preserves `updated` and `unit` metadata siblings. Property names (`marketPrice`, `lowPrice`, `midPrice`, `highPrice`) were already compatible — no renaming required for those.
-- `adaptCardmarket(raw)` — restructures TCGdex's flat Cardmarket fields into the `{ url, prices: { averageSellPrice, lowPrice, trendPrice } }` shape the frontend expects. Maps `avg` → `averageSellPrice`, `low` → `lowPrice`, `trend` → `trendPrice`.
-- `adaptPricing(raw)` — top-level coordinator; returns `null` if both sections are absent.
+### 1. Bulk enrichment of null-illustrator cards across swsh9–swsh12.5
 
-`mapCardToRow` was updated to compute `adaptPricing(card.pricing ?? null)` once per card and write three new fields to the Supabase row.
+Now that the read-model is validated, the remaining work is a one-time data-quality pass: query Supabase for all cards in swsh9–swsh12.5 where `illustrator` is null, verify each against a trusted source (Bulbapedia, pokemontcg.io, physical card scan), and insert `card_extras` rows with the correct illustrator name and a `source_note`. Do not bulk-insert unverified data. Each override must be verified at exact card ID/local-number level — do not infer from Pokémon name, set, rarity, or similar cards. This is a follow-up pass and does not block Gate 2 migration.
 
-### Full sync results
+### 2. TCGPlayer Market pricing framing
 
-A `SYNC_MODE=full` run populated pricing for 19,415 of 23,314 cards (83%). The 3,899 cards without pricing are primarily WotC-era sets where TCGdex carries no TCGPlayer data.
+The modal leads with TCGPlayer Market price. For buying decisions at card shows, NM Low or recent eBay sold prices may be more practically useful. Framing should be revisited when pricing display is next touched.
 
----
+### 3. Artist page summary has no collapse control
 
-## v0.1.1 — Gate 1 stabilization patch
+The artist bio section has no collapse toggle. On mobile this adds significant scroll distance before the card grid. A follow-up UX improvement, especially relevant for card-show use.
 
-Date: 2026-06-23
+## Current gate
 
-Merged: yes (PR merged to `stabilization/gate-1`)
+Gate 1 — Stabilize current MVP. Substantially complete.
 
-Changes:
+Items resolved across Gate 1:
 
-### Clear Cache — cancel behavior fixed
+- Clear Cache cancel behavior fixed (v0.1.1)
+- Clear Cache confirm copy corrected (v0.1.1)
+- `release_date` mapped in `supaRowToCard` (v0.1.1)
+- `pb_fallback_img_*` keys purged by Clear Cache (v0.1.1)
+- Stale TCGdex concurrency comment corrected (v0.1.1)
+- Supabase pricing schema added (v0.1.2)
+- Sync script pricing adapter implemented (v0.1.2)
+- Pricing activated in frontend (v0.1.3)
+- `card_extras_and_view.sql` deployed; five verified seed rows inserted; `index.html` updated to target `cards_effective`; live validation passed (v0.1.4)
 
-The "Clear card cache" button in Settings previously called `onClose()` unconditionally. This has been fixed. Cancel now leaves the Settings panel open.
+Remaining open before Gate 2:
 
-### Clear Cache — confirm copy corrected
+- Bulk enrichment of null-illustrator cards across swsh9–swsh12.5 (follow-up data-quality pass; not a hard Gate 2 blocker)
+- Artist alias confirmation for Saya Tsuruta and Masakazu Fukuda
 
-The confirm dialog previously read "Will re-fetch from Supabase on next load." The copy now reads "Cards will be re-fetched from Supabase immediately."
+Gate 2 migration (Vite/React) may proceed once any remaining user-visible Gate 1 issues are resolved. Artist alias confirmation is a small data-quality item and can be resolved before or during Gate 2 if it remains low-risk. The bulk enrichment data-quality pass can continue in parallel with or after Gate 2.
 
-### `supaRowToCard` — `release_date` now mapped
+## Do not do yet
 
-Mapped as `releaseDate: row.release_date || null`.
+- Do not redesign UI
+- Do not migrate to Vite yet
+- Do not add set browsing yet
+- Do not add Japanese cards yet
+- Do not add pricing confidence yet
+- Do not add Cardmarket link button yet
+- Do not silently invent Supabase columns
 
-### Clear Cache — `pb_fallback_img_*` keys now purged
-
-`clearCache` now also purges all keys matching the `pb_fallback_img_` prefix.
-
-### Stale comment corrected in `loadAllEntries`
-
-Updated to reference Supabase query pressure rather than TCGdex throttling.
-
----
-
-## v0.1 — Initial single-file MVP
-
-Date: 2026-06-23
-
-State:
-
-- GitHub Pages deployment works
-- Custom domain works
-- App is still primarily contained in `index.html`
-- Service worker exists in `sw.js`
-- Sync/backfill scripts exist in `sync/`
-- Supabase is being introduced as runtime card source
-- TCGdex remains a source/sync provider
-
-Known risk:
-
-The app is becoming too large and fragile as a single-file MVP.
-
-Next planned step:
-
-Gate 1 stabilization audit.
 
