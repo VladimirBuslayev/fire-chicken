@@ -428,7 +428,7 @@ async function fetchArtistCards(entry){
   // Build OR filter: canonical name + any aliases defined on the entry.
   const names=[entry.name,...(entry.aliases||[])];
   const ilikeFilters=names.map(n=>`illustrator.ilike.%${n}%`).join(",");
-  const{data,error}=await sb.from("cards")
+  const{data,error}=await sb.from("cards_effective")
     .select("id,name,set_id,set_name,local_id,illustrator,image_url,rarity,release_date,pricing,pricing_updated_at")
     .or(ilikeFilters)
     .order("release_date",{ascending:true,nullsFirst:false})
