@@ -4,7 +4,7 @@ Last updated: 2026-06-23
 
 ## Current version
 
-Version: v0.1.3 — Pricing Phase 2 live
+Version: v0.1.4 — Gate 1 enrichment read-model (SQL pending Supabase deployment)
 
 Illustrated is currently deployed at:
 
@@ -50,10 +50,11 @@ Current state:
 - Database: Supabase
 - External card source: TCGdex
 - Intended direction: TCGdex as ingestion/sync source; Supabase as runtime source of truth
+- Frontend read surface: `cards_effective` view (pending Supabase deployment and frontend switch)
 
 ## Working features
 
-- Artist pages — sourced from Supabase
+- Artist pages — sourced from Supabase (currently via `cards`; will switch to `cards_effective` after deployment)
 - Card grid with owned/missing states
 - Card modal with full image, rarity, artist, set
 - TCGPlayer Market price, Low / Mid / High breakdown
@@ -70,34 +71,69 @@ Current state:
 - Cache / localStorage behavior
 - GitHub Pages deployment
 
+## Supabase objects — current state
+
+### Tables
+
+| Table | Owner | Written by | Purpose |
+|---|---|---|---|
+| `cards` | sync pipeline | `sync-cards.mjs` upsert | Raw TCGdex card data; source of truth for sync |
+| `card_extras` | editorial | Manual (table editor) | Illustrator overrides and other manual corrections |
+| `artists` | admin | Manual | Artist canonical names, aliases, metadata |
+| `user_collection` | app | Frontend | Per-user owned card key set |
+| `card_overrides` | app | Frontend | Per-user force-owned / force-missing |
+| `price_history` | app | Frontend | Per-user price point log |
+| `card_favorites` | app | Frontend | Per-user bookmarks |
+| `share_links` | app | Frontend | Public binder share tokens |
+
+### Views (pending creation)
+
+| View | Source tables | Purpose |
+|---|---|---|
+| `cards_effective` | `cards` LEFT JOIN `card_extras` | Frontend read surface; exposes COALESCE(illustrator_override, illustrator) |
+
+### View access (pending creation)
+
+`cards_effective` will be created with `security_invoker = true`. anon and authenticated roles will have SELECT. No INSERT/UPDATE/DELETE is possible on a non-updatable view. `card_extras` will have RLS enabled with a SELECT-only policy for anon/authenticated; write access is service-role only.
+
 ## Supabase data contract — current status
 
-Fields selected and mapped in `fetchArtistCards` / `supaRowToCard`:
+The frontend currently selects from `cards`. After deployment of `card_extras_and_view.sql` and the `index.html` switch, it will select from `cards_effective`. Column shapes are identical; `supaRowToCard` requires no changes.
 
-| Column | Selected | Mapped as | Status |
+| Column | Source | Selected by frontend | Notes |
 |---|---|---|---|
-| `id` | yes | `id` | Live |
-| `name` | yes | `name` | Live |
-| `set_id` | yes | `set.id` | Live |
-| `set_name` | yes | `set.name` | Live |
-| `local_id` | yes | `localId` | Live |
-| `illustrator` | yes | `illustrator` | Live |
-| `image_url` | yes | `image` | Live |
-| `rarity` | yes | `rarity` | Live |
-| `release_date` | yes | `releaseDate` | Live (v0.1.1) |
-| `pricing` | yes | `pricing` | Live (v0.1.3) |
-| `pricing_updated_at` | yes | `pricingUpdatedAt` | Live (v0.1.3) — not yet rendered |
-| `pricing_source` | no | — | In Supabase; not selected (not needed by frontend) |
+| `id` | `cards` | yes | — |
+| `name` | `cards` | yes | — |
+| `set_id` | `cards` | yes | — |
+| `set_name` | `cards` | yes | — |
+| `local_id` | `cards` | yes | — |
+| `illustrator` | `COALESCE(card_extras.illustrator_override, cards.illustrator)` | yes | View resolves the best available value |
+| `image_url` | `cards` | yes | — |
+| `rarity` | `cards` | yes | — |
+| `release_date` | `cards` | yes | Mapped as `releaseDate` |
+| `pricing` | `cards` | yes | JSONB; adapted from TCGdex at sync time |
+| `pricing_updated_at` | `cards` | yes | Mapped as `pricingUpdatedAt`; not yet rendered |
 
-Pricing coverage: 19,415 of 23,314 cards have pricing data (83%). Cards without pricing are primarily WotC-era sets where TCGdex carries no TCGPlayer data.
-
-Fields listed in the architecture data contract but not yet implemented in the frontend: `source`, `source_card_id`, `artist_id`, `illustrator_raw`, `language`, `variants`, `tcgplayer_url`, `ebay_sold_url`, `price_confidence`.
+Pricing coverage: 19,415 of 23,314 cards have pricing data (83%).
 
 ## Known limitations
 
+### Null illustrator — enrichment read-model ready, deployment pending
+
+Six set ranges have `illustrator: null` in the `cards` table due to a TCGdex data gap:
+
+- swsh9 (Brilliant Stars)
+- swsh10 (Astral Radiance)
+- swsh10.5 (Pokémon GO promo)
+- swsh11 (Lost Origin)
+- swsh12 (Silver Tempest)
+- swsh12.5 (Crown Zenith)
+
+The SQL for the `card_extras` table and `cards_effective` view is written and ready to run (`card_extras_and_view.sql`). The frontend switch (`sb.from("cards_effective")`) is prepared in `index.html`. Neither is deployed yet — deployment follows the validation sequence in the SQL file. Once deployed and the high-priority seed rows are inserted (Giratina, Altaria in the named sets, verified against physical cards), those cards will appear on artist pages. The remaining null-illustrator cards in those six sets are a separate data-quality pass tracked below.
+
 ### Pricing — framing and scope
 
-Pricing reflects TCGPlayer market data sourced through TCGdex, updated weekly by the sync pipeline. It is buying guidance, not a price authority. TCGPlayer Market price may not reflect realistic buying price — for any significant purchase, the eBay Sold link provides a more grounded view of recent actual sales.
+Pricing reflects TCGPlayer market data sourced through TCGdex, updated weekly by the sync pipeline. It is buying guidance, not a price authority.
 
 The following pricing features remain deferred:
 
@@ -116,29 +152,21 @@ The following aliases have not been confirmed against live Supabase data:
 
 ## Known follow-up items
 
-### 1. Some previously corrected cards appear missing after sync
+### 1. Deploy enrichment read-model and validate
 
-After the full re-sync for pricing, some cards that were previously visible appear to be absent for specific artists. Known examples:
+Run `card_extras_and_view.sql` in Supabase, insert the verified high-priority `card_extras` rows (Giratina and Altaria cards in swsh11, swsh12, swsh12.5), deploy the updated `index.html`, clear the card cache, and validate the corrected cards appear on the expected artist pages. Full regression: pricing UI, owned/missing, favorites, eBay links, share/binder.
 
-- Giratina from Lost Origin (Shinji Kanda)
-- Altaria from Crown Zenith (Asako Ito)
+### 2. Bulk enrichment of null-illustrator cards across swsh9–swsh12.5
 
-The root cause is not yet confirmed. Possible explanations, in order of likelihood:
+Once the read-model is validated, the remaining work is a one-time data-quality pass: query Supabase for all cards in swsh9–swsh12.5 where `illustrator` is null, verify each against a trusted source (Bulbapedia, pokemontcg.io, physical card scan), and insert `card_extras` rows with the correct illustrator name and a `source_note`. Do not bulk-insert unverified data. This is a follow-up pass and does not block Gate 2 migration once the read-model itself is validated.
 
-- Cards are present in Supabase but `artist_id` was not resolved (illustrator string didn't match an alias), so they don't surface when the frontend queries by illustrator name
-- Cards are absent from TCGdex's current catalog (removed, renamed, or not yet added)
-- The sync incremental logic skipped these sets and they were not re-fetched
-- A manual correction applied via the frontend was overwritten by the full sync upsert
+### 3. TCGPlayer Market pricing framing
 
-Needs investigation before next feature work. Do not assume the sync is correct without spot-checking against known card counts.
+The modal leads with TCGPlayer Market price. For buying decisions at card shows, NM Low or recent eBay sold prices may be more practically useful. Framing should be revisited when pricing display is next touched.
 
-### 2. TCGPlayer Market may not be the most useful primary price
+### 4. Artist page summary has no collapse control
 
-The modal currently leads with TCGPlayer Market price. For buying decisions at card shows, the more practically useful signals are NM Low (the cheapest near-mint copy listed), recent eBay sold prices, or a buylist price. Market price averages across all listed copies and conditions. This framing should be revisited when the pricing display is next touched — but requires no code change until then. Document the concern here so it is not forgotten.
-
-### 3. Artist page summary has no collapse control
-
-The artist bio / story section on individual artist pages expands to full text with no way to collapse it. On mobile this adds significant scroll distance before reaching the card grid. A collapse toggle (or truncation with "read more") is a UX follow-up, particularly relevant for the card-show use case where fast browsing matters.
+The artist bio section has no collapse toggle. On mobile this adds significant scroll distance before the card grid. A follow-up UX improvement, especially relevant for card-show use.
 
 ## Current gate
 
@@ -154,14 +182,15 @@ Items resolved across Gate 1:
 - Supabase pricing schema added (v0.1.2)
 - Sync script pricing adapter implemented (v0.1.2)
 - Pricing activated in frontend (v0.1.3)
+- `card_extras_and_view.sql` written; `index.html` updated to target `cards_effective` (v0.1.4 — pending deployment and validation)
 
-Items that remain open before Gate 2 migration:
+Remaining open before Gate 2:
 
-- Missing card investigation (Giratina / Altaria — see Known Follow-up Items)
+- Deploy `card_extras_and_view.sql`, insert verified seed rows, deploy frontend switch, validate (v0.1.4)
+- Bulk enrichment of null-illustrator cards across swsh9–swsh12.5 (follow-up data-quality pass; not a hard Gate 2 blocker once the read-model is validated)
 - Artist alias confirmation for Saya Tsuruta and Masakazu Fukuda
-- Decision on whether `cmUrl` / Cardmarket link should be activated before migration
 
-Do not migrate to Vite until the missing card investigation is resolved and alias coverage is confirmed.
+Gate 2 migration (Vite/React) may proceed once the read-model is deployed and validated and alias coverage is resolved. The bulk enrichment data-quality pass can continue in parallel with or after Gate 2.
 
 ## Do not do yet
 
