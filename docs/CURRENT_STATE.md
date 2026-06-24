@@ -4,7 +4,7 @@ Last updated: 2026-06-23
 
 ## Current version
 
-Version: v0.1.4 — Gate 1 enrichment read-model (SQL pending Supabase deployment)
+Version: v0.1.4 — Gate 1 enrichment read-model (deployed and validated)
 
 Illustrated is currently deployed at:
 
@@ -50,11 +50,11 @@ Current state:
 - Database: Supabase
 - External card source: TCGdex
 - Intended direction: TCGdex as ingestion/sync source; Supabase as runtime source of truth
-- Frontend read surface: `cards_effective` view (pending Supabase deployment and frontend switch)
+- Frontend read surface: `cards_effective` view (live)
 
 ## Working features
 
-- Artist pages — sourced from Supabase (currently via `cards`; will switch to `cards_effective` after deployment)
+- Artist pages — sourced from Supabase via `cards_effective`
 - Card grid with owned/missing states
 - Card modal with full image, rarity, artist, set
 - TCGPlayer Market price, Low / Mid / High breakdown
@@ -86,19 +86,33 @@ Current state:
 | `card_favorites` | app | Frontend | Per-user bookmarks |
 | `share_links` | app | Frontend | Public binder share tokens |
 
-### Views (pending creation)
+### Views
 
 | View | Source tables | Purpose |
 |---|---|---|
 | `cards_effective` | `cards` LEFT JOIN `card_extras` | Frontend read surface; exposes COALESCE(illustrator_override, illustrator) |
 
-### View access (pending creation)
+### View access
 
-`cards_effective` will be created with `security_invoker = true`. anon and authenticated roles will have SELECT. No INSERT/UPDATE/DELETE is possible on a non-updatable view. `card_extras` will have RLS enabled with a SELECT-only policy for anon/authenticated; write access is service-role only.
+`cards_effective` is live with `security_invoker = true`. anon and authenticated roles have SELECT. No INSERT/UPDATE/DELETE is possible on a non-updatable view. `card_extras` has RLS enabled with a SELECT-only policy for anon/authenticated; write access is service-role only.
+
+### card_extras — verified seed rows
+
+Five high-priority cards in the null-illustrator set ranges were verified and inserted as of v0.1.4:
+
+| Card ID | Card name | Illustrator override | Notes |
+|---|---|---|---|
+| `swsh11-185` | Giratina V | N-DESIGN Inc. | TCGdex null for swsh11; verified at card ID level |
+| `swsh11-186` | Giratina V | Shinji Kanda | TCGdex null for swsh11; verified at card ID level |
+| `swsh12-TG11` | Altaria | Yuu Nishida | TCGdex null for swsh12; verified (corrected from initial wrong assignment) |
+| `swsh12.5-GG19` | Altaria | Asako Ito | TCGdex null for swsh12.5; verified at card ID level |
+| `swsh12.5-GG69` | Giratina VSTAR | Akira Egawa | TCGdex null for swsh12.5; verified (corrected from initial wrong assignment) |
+
+All remaining null-illustrator cards across swsh9–swsh12.5 are a separate follow-up data-quality pass (see Known follow-up items).
 
 ## Supabase data contract — current status
 
-The frontend currently selects from `cards`. After deployment of `card_extras_and_view.sql` and the `index.html` switch, it will select from `cards_effective`. Column shapes are identical; `supaRowToCard` requires no changes.
+The frontend selects from `cards_effective`. Column shapes are identical to `cards`; `supaRowToCard` required no changes when the switch was made.
 
 | Column | Source | Selected by frontend | Notes |
 |---|---|---|---|
@@ -118,7 +132,7 @@ Pricing coverage: 19,415 of 23,314 cards have pricing data (83%).
 
 ## Known limitations
 
-### Null illustrator — enrichment read-model ready, deployment pending
+### Null illustrator — enrichment read-model live; bulk data-quality pass pending
 
 Six set ranges have `illustrator: null` in the `cards` table due to a TCGdex data gap:
 
@@ -129,7 +143,7 @@ Six set ranges have `illustrator: null` in the `cards` table due to a TCGdex dat
 - swsh12 (Silver Tempest)
 - swsh12.5 (Crown Zenith)
 
-The SQL for the `card_extras` table and `cards_effective` view is written and ready to run (`card_extras_and_view.sql`). The frontend switch (`sb.from("cards_effective")`) is prepared in `index.html`. Neither is deployed yet — deployment follows the validation sequence in the SQL file. Once deployed and the high-priority seed rows are inserted (Giratina, Altaria in the named sets, verified against physical cards), those cards will appear on artist pages. The remaining null-illustrator cards in those six sets are a separate data-quality pass tracked below.
+The `card_extras` table and `cards_effective` view are deployed and validated. Five high-priority seed rows were verified and inserted (see card_extras — verified seed rows above). Those corrected cards now appear on the correct artist pages. The remaining null-illustrator cards across those six sets are a separate data-quality pass tracked in Known follow-up items.
 
 ### Pricing — framing and scope
 
@@ -152,19 +166,15 @@ The following aliases have not been confirmed against live Supabase data:
 
 ## Known follow-up items
 
-### 1. Deploy enrichment read-model and validate
+### 1. Bulk enrichment of null-illustrator cards across swsh9–swsh12.5
 
-Run `card_extras_and_view.sql` in Supabase, insert the verified high-priority `card_extras` rows (Giratina and Altaria cards in swsh11, swsh12, swsh12.5), deploy the updated `index.html`, clear the card cache, and validate the corrected cards appear on the expected artist pages. Full regression: pricing UI, owned/missing, favorites, eBay links, share/binder.
+Once the read-model is validated, the remaining work is a one-time data-quality pass: query Supabase for all cards in swsh9–swsh12.5 where `illustrator` is null, verify each against a trusted source (Bulbapedia, pokemontcg.io, physical card scan), and insert `card_extras` rows with the correct illustrator name and a `source_note`. Do not bulk-insert unverified data. Each override must be verified at exact card ID/local-number level — do not infer from Pokémon name, set, rarity, or similar cards. This is a follow-up pass and does not block Gate 2 migration.
 
-### 2. Bulk enrichment of null-illustrator cards across swsh9–swsh12.5
-
-Once the read-model is validated, the remaining work is a one-time data-quality pass: query Supabase for all cards in swsh9–swsh12.5 where `illustrator` is null, verify each against a trusted source (Bulbapedia, pokemontcg.io, physical card scan), and insert `card_extras` rows with the correct illustrator name and a `source_note`. Do not bulk-insert unverified data. This is a follow-up pass and does not block Gate 2 migration once the read-model itself is validated.
-
-### 3. TCGPlayer Market pricing framing
+### 2. TCGPlayer Market pricing framing
 
 The modal leads with TCGPlayer Market price. For buying decisions at card shows, NM Low or recent eBay sold prices may be more practically useful. Framing should be revisited when pricing display is next touched.
 
-### 4. Artist page summary has no collapse control
+### 3. Artist page summary has no collapse control
 
 The artist bio section has no collapse toggle. On mobile this adds significant scroll distance before the card grid. A follow-up UX improvement, especially relevant for card-show use.
 
@@ -182,15 +192,14 @@ Items resolved across Gate 1:
 - Supabase pricing schema added (v0.1.2)
 - Sync script pricing adapter implemented (v0.1.2)
 - Pricing activated in frontend (v0.1.3)
-- `card_extras_and_view.sql` written; `index.html` updated to target `cards_effective` (v0.1.4 — pending deployment and validation)
+- `card_extras_and_view.sql` deployed; five verified seed rows inserted; `index.html` updated to target `cards_effective`; live validation passed (v0.1.4)
 
 Remaining open before Gate 2:
 
-- Deploy `card_extras_and_view.sql`, insert verified seed rows, deploy frontend switch, validate (v0.1.4)
-- Bulk enrichment of null-illustrator cards across swsh9–swsh12.5 (follow-up data-quality pass; not a hard Gate 2 blocker once the read-model is validated)
+- Bulk enrichment of null-illustrator cards across swsh9–swsh12.5 (follow-up data-quality pass; not a hard Gate 2 blocker)
 - Artist alias confirmation for Saya Tsuruta and Masakazu Fukuda
 
-Gate 2 migration (Vite/React) may proceed once the read-model is deployed and validated and alias coverage is resolved. The bulk enrichment data-quality pass can continue in parallel with or after Gate 2.
+Gate 2 migration (Vite/React) may proceed once alias coverage is resolved. The bulk enrichment data-quality pass can continue in parallel with or after Gate 2.
 
 ## Do not do yet
 
@@ -201,4 +210,5 @@ Gate 2 migration (Vite/React) may proceed once the read-model is deployed and va
 - Do not add pricing confidence yet
 - Do not add Cardmarket link button yet
 - Do not silently invent Supabase columns
+
 
