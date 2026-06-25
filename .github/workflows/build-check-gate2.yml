@@ -1,0 +1,51 @@
+# ── Illustrated Vault — Gate 2 Build Check ────────────────────────────────────
+#
+# PURPOSE: Build-only smoke test for the gate-2/vite-migration branch.
+# This workflow does NOT deploy anything. It does not touch gh-pages,
+# does not require public/CNAME, and does not affect the live site.
+#
+# Run this from GitHub Actions UI to validate that `npm run build`
+# succeeds before proceeding to Phase 5 React wiring.
+#
+# Trigger: manual only (workflow_dispatch).
+# No confirmation input required — build checks have no destructive consequence.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Build Check — Gate 2
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout gate-2/vite-migration
+        uses: actions/checkout@v4
+        with:
+          ref: gate-2/vite-migration
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        # npm ci requires package-lock.json, which does not exist in this repo.
+        # Use npm install instead.
+        run: npm install
+
+      - name: Build
+        # No VITE_ secrets needed — supabaseClient.js uses hardcoded publishable
+        # credentials. No import.meta.env references exist anywhere in src/.
+        run: npm run build
+
+      - name: Confirm dist output exists
+        run: |
+          if [ ! -d dist ]; then
+            echo "ERROR: dist/ directory not found after build."
+            exit 1
+          fi
+          echo "Build succeeded. dist/ contents:"
+          ls dist/
