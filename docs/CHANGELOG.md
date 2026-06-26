@@ -1,214 +1,242 @@
-# Illustrated — Current State
+# Illustrated — Changelog
 
-Last updated: 2026-06-23
+## gate-2/vite-migration branch — 2026-06-25
 
-## Current version
+### Phase 5D — Gate 2 checkpoint documentation update
 
-Version: v0.1.4 — Gate 1 enrichment read-model (deployed and validated)
+Status: This update.
 
-Illustrated is currently deployed at:
+Updated CURRENT_STATE.md, CHANGELOG.md, ARCHITECTURE.md, DECISION_LOG.md to reflect the validated state of the Gate 2 migration through Phase 5C. No code changes.
 
-https://illustratedvault.com
+---
 
-The app is still primarily built from a single `index.html` file, with a supporting `sw.js` service worker, GitHub Pages deployment, and sync scripts.
+### Phase 5C — Local core parity audit
 
-## Current repo structure
+Status: Passed.
 
-- `.github/workflows/` — GitHub Actions workflows
-- `sync/` — data sync / backfill scripts
-- `CNAME` — custom domain configuration
-- `README.md` — basic repo readme
-- `index.html` — main single-file app
-- `sw.js` — service worker
+Ran `npm run build` locally and opened `npm run preview`. Compared Vite app behavior against `index.legacy.html` across core flows:
 
-## Product direction
+- App loads; spinner → dashboard with valid session; landing page with no session
+- Binder opens; artist sections load from Supabase `cards_effective`
+- Cards display correctly; owned/missing states visually consistent with legacy
+- Console showed only expected pokemontcg.io fallback 404s (no ReferenceError, no TypeError)
+- Network tab confirmed `cards_effective` requests after cache clear; no TCGdex `/illustrators/` calls observed
+- Overall visual behavior consistent with legacy
 
-Illustrated is a premium visual archive and collection companion for Pokémon card collectors.
+Remaining flows requiring a live HTTPS URL (OTP login, SharedBinder real-token, auth redirect handling) are deferred to Phase 5E/5F.
 
-The differentiator is artist-first and artwork-first browsing, not simply price tracking.
+---
 
-The product should feel:
+### Phase 5B — Full App port
 
-- premium
-- calm
-- visual
-- curated
-- collector-focused
-- less gaming UI
-- more archive / vault / gallery
+Status: Closed / build-validated. GitHub Actions: npm install succeeded, npm run build succeeded, Vite transformed 92 modules, dist/ produced, logo asset bundled correctly, no deploy occurred.
 
-Pricing is present as buying guidance and should always be treated as a reference, not an authority. Illustrated Vault is not a price tracker.
+Replaced the Phase 5A smoke-test `src/App.jsx` with the full React component tree from `index.legacy.html` lines 446–1665. Updated `src/main.jsx` to wire ErrorBoundary, SharedBinder, and `?share=` routing.
 
-## Current architecture
+Files changed:
+- `src/App.jsx` — 1,266 lines; full component tree
+- `src/main.jsx` — 23 lines; real entry point
 
-Current state:
+Substitutions applied (behavior unchanged):
+- `LOGO_DATA_URI` inline base64 → `import logoSrc from './assets/logo.webp'`
+- `fmt$(...)` → `fmtPrice(...)` at 8 call sites (Dashboard, PriceChart ×2, CardModal ×5)
+- `sb.*` → `supabase.*` at 12 call sites (auth handlers in App, ShareLinkPanel, handleToggleFavorite, clearManual)
+- `window.Papa` → `import Papa from 'papaparse'`
+- `SET_ORDER` direct usage in ArtistSection confirmed and import added (gap caught during implementation)
+- `REDIRECT` constant (line 103): defined in legacy but never referenced in component code; omitted
+- `useEnter`/`useLeave`: confirmed to be `onMouseEnter`/`onMouseLeave` JSX props, not custom hooks; no action needed
 
-- Single-file MVP: yes
-- Frontend runtime: `index.html`
-- Deployment: GitHub Pages
-- Domain: `illustratedvault.com`
-- Database: Supabase
-- External card source: TCGdex
-- Intended direction: TCGdex as ingestion/sync source; Supabase as runtime source of truth
-- Frontend read surface: `cards_effective` view (live)
+PriceChart confirmed to use hand-coded SVG only. No new npm dependency added.
 
-## Working features
+`index.legacy.html` md5 `fa281f58d7152f8e5b9487c2c5f1e17e` — confirmed unchanged throughout.
 
-- Artist pages — sourced from Supabase via `cards_effective`
-- Card grid with owned/missing states
-- Card modal with full image, rarity, artist, set
-- TCGPlayer Market price, Low / Mid / High breakdown
-- All Variants pricing section (multi-variant cards)
+---
+
+### Phase 5A — Vite boundary smoke test
+
+Status: Closed / build-validated. GitHub Actions: npm install succeeded, npm run build succeeded, dist/ produced, no deploy occurred.
+
+Created a minimal `src/App.jsx` smoke-test component that imports `ARTISTS` from `./constants/artists.js` and `toSlug` from `./utils/slug.js` to prove ES module resolution. Updated `src/main.jsx` to render `<App />` instead of the placeholder div.
+
+No SharedBinder routing, no ErrorBoundary, no auth, no Supabase calls — intentionally minimal for boundary validation only.
+
+Files changed:
+- `src/App.jsx` — created (smoke test)
+- `src/main.jsx` — placeholder div → `<App />`
+
+---
+
+### Phase 4D Repair — Service-layer stub repair
+
+Status: Closed / build-validated. Included in Phase 5A build validation.
+
+Seven Phase 4C/4D files were discovered to be broken self-import stubs (each file imported from itself, providing no actual implementation). All seven were replaced with real function bodies copied mechanically from `index.legacy.html`.
+
+Files repaired:
+
+| File | Functions repaired |
+|---|---|
+| `src/utils/format.js` | `fmtPrice` (renamed from `fmt$`), `todayStr` |
+| `src/utils/imageUrl.js` | `imgSmall`, `imgLarge` |
+| `src/services/cardAdapter.js` | `supaRowToCard` |
+| `src/services/tcgdexService.js` | `fetchCardBriefs` (set path only), `fetchFullCard` |
+| `src/services/imageService.js` | `fetchFallbackImage`, `buildLimitlessGuess` |
+| `src/services/collectionService.js` | `loadUserData`, `saveCollection`, `saveOverride`, `savePricePoint` |
+| `src/services/shareService.js` | `fetchSharedCollection` |
+
+`tcgdexService.js` note: the repaired version intentionally excludes the legacy illustrator lookup branch (`/illustrators/{name}`). That branch is not repaired or carried forward. `fetchCardBriefs` returns `[]` immediately when `entry?.isSet` is false. This enforces the Gate 2 rule that TCGdex is permitted only for `entry.isSet` paths. Artist-path display uses Supabase `cards_effective` exclusively.
+
+`fmt$` renamed to `fmtPrice` in the module export. The legacy single-file shorthand used a trailing `$` character; the module name is cleaner for ESM. Function behavior is identical.
+
+---
+
+### Phase 4D — Service extraction
+
+Status: Closed / build-validated.
+
+Created:
+- `src/services/collectionService.js`
+- `src/services/shareService.js`
+- `src/services/cardAdapter.js`
+- `src/services/imageService.js`
+- `src/services/tcgdexService.js`
+- `src/services/cardService.js`
+
+None of these were wired into `index.legacy.html`. They exist as the module-world service layer ready for Phase 5B.
+
+`cardService.js` artist path queries `cards_effective`. Cache keys and TTL behavior are preserved.
+
+---
+
+### Phase 4C — Remaining pure utilities extraction
+
+Status: Closed / build-validated. (Stubs later repaired in Phase 4D Repair.)
+
+Created:
+- `src/utils/format.js`
+- `src/utils/imageUrl.js`
+
+---
+
+### Phase 4B — Legacy inventory audit
+
+Status: Closed / no code changes.
+
+Conclusion: auth/session handling should wait until a real Vite React app boundary exists (deferred to Phase 5B), because auth drives `setUser`, `setView`, and `loadData`.
+
+---
+
+### Phase 4A — Supabase client boundary
+
+Status: Closed / build-validated.
+
+Created `src/services/supabaseClient.js`. Additive only; not wired into legacy.
+
+---
+
+### Phase 3 — Constants and utilities extraction
+
+Status: Closed / build-validated.
+
+Created:
+- `src/constants/setOrder.js`
+- `src/constants/artists.js`
+- `src/constants/config.js`
+- `src/utils/cache.js`
+- `src/utils/slug.js`
+- `src/utils/keys.js`
+- `src/utils/cardUtils.js`
+- `src/utils/sort.js`
+
+All values are verbatim copies from `index.legacy.html`. `makeKeys` output format is unchanged — any modification would break Supabase `user_collection.owned_keys` matching.
+
+---
+
+### Phase 2B — Service worker placement
+
+Status: Closed / build-validated.
+
+Created `public/sw.js` as a byte-for-byte copy of root `sw.js`. Root `sw.js` left in place. Service worker registration in `index.html` intentionally deferred to Phase 5G.
+
+---
+
+### Phase 2A — Static asset extraction
+
+Status: Closed / build-validated.
+
+Extracted base64-embedded assets from `index.legacy.html`:
+- `public/apple-touch-icon.png`
+- `public/favicon.png`
+- `public/manifest.json`
+- `public/icons/icon-192.png`
+- `public/icons/icon-512.png`
+- `src/assets/logo.webp`
+
+`index.html` updated with `<link>` tags referencing these assets.
+
+---
+
+### Phase 1 — Vite scaffold
+
+Status: Closed / build-validated.
+
+Created:
+- `index.legacy.html` (copy of legacy `index.html` at Gate 2 start; untouched source of truth)
+- New minimal Vite `index.html`
+- `package.json` (Vite 5, React 18, @supabase/supabase-js, papaparse)
+- `vite.config.js`
+- `tailwind.config.js` (custom color tokens: bg, surface, card, border, accent, text, muted, ok, err)
+- `postcss.config.js`
+- `src/main.jsx` (scaffold placeholder)
+- `src/styles/index.css` (verbatim CSS from legacy `<style>` block)
+- `.github/workflows/deploy-gate2.yml` (manual-only, not triggered)
+- `.github/workflows/build-check-gate2.yml` (build-only validation, no deploy)
+- `.gitignore`
+
+---
+
+## v0.1.4 — 2026-06-23
+
+Gate 1 enrichment read-model. Deployed and validated at illustratedvault.com.
+
+- `card_extras_and_view.sql` deployed to Supabase
+- `cards_effective` view live with `security_invoker = true`
+- Five verified seed rows inserted into `card_extras`
+- `index.html` updated to query `cards_effective` instead of `cards`
+- Live validation confirmed: corrected cards appear on correct artist pages
+
+---
+
+## v0.1.3 — 2026-06-23
+
+Pricing activated in frontend.
+
+- TCGPlayer Market price display in card modal
+- Low / Mid / High breakdown
+- All Variants section (multi-variant cards)
 - Cardmarket Trend section (where data exists)
-- $↓ and $↑ price sort modes
-- Price history recording per card per user
-- CSV import (Collectr export)
-- Manual owned/missing overrides
-- Bookmarks / Most Wanted list
-- Share / binder view
-- Image fallback logic (pokemontcg.io archive, Limitless TCG)
-- eBay sold links
-- Cache / localStorage behavior
-- GitHub Pages deployment
+- `$↓` and `$↑` sort modes
+- Price history recording per card per user (first open per day)
 
-## Supabase objects — current state
+---
 
-### Tables
+## v0.1.2 — 2026-06-23
 
-| Table | Owner | Written by | Purpose |
-|---|---|---|---|
-| `cards` | sync pipeline | `sync-cards.mjs` upsert | Raw TCGdex card data; source of truth for sync |
-| `card_extras` | editorial | Manual (table editor) | Illustrator overrides and other manual corrections |
-| `artists` | admin | Manual | Artist canonical names, aliases, metadata |
-| `user_collection` | app | Frontend | Per-user owned card key set |
-| `card_overrides` | app | Frontend | Per-user force-owned / force-missing |
-| `price_history` | app | Frontend | Per-user price point log |
-| `card_favorites` | app | Frontend | Per-user bookmarks |
-| `share_links` | app | Frontend | Public binder share tokens |
+Supabase pricing schema. Sync script pricing adapter.
 
-### Views
+---
 
-| View | Source tables | Purpose |
-|---|---|---|
-| `cards_effective` | `cards` LEFT JOIN `card_extras` | Frontend read surface; exposes COALESCE(illustrator_override, illustrator) |
+## v0.1.1 — 2026-06-23
 
-### View access
+Bug fixes:
+- Clear Cache cancel behavior fixed
+- Clear Cache confirm copy corrected
+- `release_date` mapped in `supaRowToCard`
+- `pb_fallback_img_*` keys purged by Clear Cache
+- Stale TCGdex concurrency comment corrected
 
-`cards_effective` is live with `security_invoker = true`. anon and authenticated roles have SELECT. No INSERT/UPDATE/DELETE is possible on a non-updatable view. `card_extras` has RLS enabled with a SELECT-only policy for anon/authenticated; write access is service-role only.
+---
 
-### card_extras — verified seed rows
+## v0.1.0 — 2026-06-23 (approximate)
 
-Five high-priority cards in the null-illustrator set ranges were verified and inserted as of v0.1.4:
-
-| Card ID | Card name | Illustrator override | Notes |
-|---|---|---|---|
-| `swsh11-185` | Giratina V | N-DESIGN Inc. | TCGdex null for swsh11; verified at card ID level |
-| `swsh11-186` | Giratina V | Shinji Kanda | TCGdex null for swsh11; verified at card ID level |
-| `swsh12-TG11` | Altaria | Yuu Nishida | TCGdex null for swsh12; verified (corrected from initial wrong assignment) |
-| `swsh12.5-GG19` | Altaria | Asako Ito | TCGdex null for swsh12.5; verified at card ID level |
-| `swsh12.5-GG69` | Giratina VSTAR | Akira Egawa | TCGdex null for swsh12.5; verified (corrected from initial wrong assignment) |
-
-All remaining null-illustrator cards across swsh9–swsh12.5 are a separate follow-up data-quality pass (see Known follow-up items).
-
-## Supabase data contract — current status
-
-The frontend selects from `cards_effective`. Column shapes are identical to `cards`; `supaRowToCard` required no changes when the switch was made.
-
-| Column | Source | Selected by frontend | Notes |
-|---|---|---|---|
-| `id` | `cards` | yes | — |
-| `name` | `cards` | yes | — |
-| `set_id` | `cards` | yes | — |
-| `set_name` | `cards` | yes | — |
-| `local_id` | `cards` | yes | — |
-| `illustrator` | `COALESCE(card_extras.illustrator_override, cards.illustrator)` | yes | View resolves the best available value |
-| `image_url` | `cards` | yes | — |
-| `rarity` | `cards` | yes | — |
-| `release_date` | `cards` | yes | Mapped as `releaseDate` |
-| `pricing` | `cards` | yes | JSONB; adapted from TCGdex at sync time |
-| `pricing_updated_at` | `cards` | yes | Mapped as `pricingUpdatedAt`; not yet rendered |
-
-Pricing coverage: 19,415 of 23,314 cards have pricing data (83%).
-
-## Known limitations
-
-### Null illustrator — enrichment read-model live; bulk data-quality pass pending
-
-Six set ranges have `illustrator: null` in the `cards` table due to a TCGdex data gap:
-
-- swsh9 (Brilliant Stars)
-- swsh10 (Astral Radiance)
-- swsh10.5 (Pokémon GO promo)
-- swsh11 (Lost Origin)
-- swsh12 (Silver Tempest)
-- swsh12.5 (Crown Zenith)
-
-The `card_extras` table and `cards_effective` view are deployed and validated. Five high-priority seed rows were verified and inserted (see card_extras — verified seed rows above). Those corrected cards now appear on the correct artist pages. The remaining null-illustrator cards across those six sets are a separate data-quality pass tracked in Known follow-up items.
-
-### Pricing — framing and scope
-
-Pricing reflects TCGPlayer market data sourced through TCGdex, updated weekly by the sync pipeline. It is buying guidance, not a price authority.
-
-The following pricing features remain deferred:
-
-- Pricing confidence labels
-- Price staleness display (`pricingUpdatedAt` is mapped but not rendered)
-- Cardmarket link button (`cmUrl` is computed in the modal but not rendered)
-- Price alerts and watchlists
-- Advanced price history analytics
-
-### Artist alias coverage — unconfirmed
-
-The following aliases have not been confirmed against live Supabase data:
-
-- Saya Tsuruta — full-width Unicode space variant
-- Masakazu Fukuda — typo variant ("Masayuki Fukuda")
-
-## Known follow-up items
-
-### 1. Bulk enrichment of null-illustrator cards across swsh9–swsh12.5
-
-Now that the read-model is validated, the remaining work is a one-time data-quality pass: query Supabase for all cards in swsh9–swsh12.5 where `illustrator` is null, verify each against a trusted source (Bulbapedia, pokemontcg.io, physical card scan), and insert `card_extras` rows with the correct illustrator name and a `source_note`. Do not bulk-insert unverified data. Each override must be verified at exact card ID/local-number level — do not infer from Pokémon name, set, rarity, or similar cards. This is a follow-up pass and does not block Gate 2 migration.
-
-### 2. TCGPlayer Market pricing framing
-
-The modal leads with TCGPlayer Market price. For buying decisions at card shows, NM Low or recent eBay sold prices may be more practically useful. Framing should be revisited when pricing display is next touched.
-
-### 3. Artist page summary has no collapse control
-
-The artist bio section has no collapse toggle. On mobile this adds significant scroll distance before the card grid. A follow-up UX improvement, especially relevant for card-show use.
-
-## Current gate
-
-Gate 1 — Stabilize current MVP. Substantially complete.
-
-Items resolved across Gate 1:
-
-- Clear Cache cancel behavior fixed (v0.1.1)
-- Clear Cache confirm copy corrected (v0.1.1)
-- `release_date` mapped in `supaRowToCard` (v0.1.1)
-- `pb_fallback_img_*` keys purged by Clear Cache (v0.1.1)
-- Stale TCGdex concurrency comment corrected (v0.1.1)
-- Supabase pricing schema added (v0.1.2)
-- Sync script pricing adapter implemented (v0.1.2)
-- Pricing activated in frontend (v0.1.3)
-- `card_extras_and_view.sql` deployed; five verified seed rows inserted; `index.html` updated to target `cards_effective`; live validation passed (v0.1.4)
-
-Remaining open before Gate 2:
-
-- Bulk enrichment of null-illustrator cards across swsh9–swsh12.5 (follow-up data-quality pass; not a hard Gate 2 blocker)
-- Artist alias confirmation for Saya Tsuruta and Masakazu Fukuda
-
-Gate 2 migration (Vite/React) may proceed once any remaining user-visible Gate 1 issues are resolved. Artist alias confirmation is a small data-quality item and can be resolved before or during Gate 2 if it remains low-risk. The bulk enrichment data-quality pass can continue in parallel with or after Gate 2.
-
-## Do not do yet
-
-- Do not redesign UI
-- Do not migrate to Vite yet
-- Do not add set browsing yet
-- Do not add Japanese cards yet
-- Do not add pricing confidence yet
-- Do not add Cardmarket link button yet
-- Do not silently invent Supabase columns
-
-
+Initial single-file MVP. Artist binder, card grid, owned/missing states, CSV import, favorites, share links, image fallback logic, manual overrides.
