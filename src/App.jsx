@@ -332,7 +332,7 @@ function Dashboard({cardData,checkOwned,favorites,user,onGoBinder,onUploadCSV,cs
 }
 
 // ── CARD TILE ──────────────────────────────────────────────────────────────────
-const CardTile=React.memo(function CardTile({card,owned,manualOwned,manualMissing,isFavorite,onCardClick,onToggleFavorite,readOnly}){
+const CardTile=React.memo(function CardTile({card,owned,manualOwned,manualMissing,isFavorite,onCardClick,onToggleFavorite,readOnly,intentStatus}){
   const badge=owned?{color:"#22c55e",label:"✓"}:null;
   const sm=imgSmall(card);
   const[fallback,setFallback]=useState(undefined); // undefined=not tried yet, false=tried & missing, {small,large}=found
@@ -352,6 +352,7 @@ const CardTile=React.memo(function CardTile({card,owned,manualOwned,manualMissin
         {displaySrc?<img src={displaySrc} alt={card.name} loading="lazy" decoding="async" onError={isUnverified?()=>setLimitlessFailed(true):undefined}/>:<div className="card-blank"><div className="blank-inner">{fallback===undefined?<IcoSpin/>:<IcoNoImage/>}<span>{card.name}</span></div></div>}
       </div>
       {badge&&<div style={{position:"absolute",top:3,right:3,background:badge.color,borderRadius:"50%",width:14,height:14,display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,color:"white",fontWeight:700,pointerEvents:"none"}}>{badge.label}</div>}
+      {!readOnly&&!owned&&(intentStatus==="hunting"||intentStatus==="want")&&<div title={`Hunt status: ${intentStatus}`} style={{position:"absolute",top:3,left:3,width:9,height:9,borderRadius:"50%",background:intentStatus==="hunting"?"#9b7fe8":"transparent",border:intentStatus==="hunting"?"1.5px solid rgba(7,7,15,0.85)":"1.5px solid #9b7fe8",boxShadow:"0 1px 4px rgba(0,0,0,0.6)",pointerEvents:"none"}}/>}
       {!readOnly&&<button className={`fav-btn ${isFavorite?"on":"off"}`} onClick={e=>{e.stopPropagation();onToggleFavorite(card.id);}}>★</button>}
     </div>
   );
@@ -530,7 +531,7 @@ function CardModal({card,owned,manualOwned,manualMissing,isFavorite,priceHistory
 // ── ARTIST PAGE ─────────────────────────────────────────────────────────────────
 // Dedicated full-screen page for a single illustrator.
 // Each artist gets a unique accent colour, quote, and hero layout.
-function ArtistPage({slug,entry,cards,checkOwned,manualOwned,manualMissing,favorites,onCardClick,onToggleFavorite,onBack}){
+function ArtistPage({slug,entry,cards,checkOwned,manualOwned,manualMissing,favorites,onCardClick,onToggleFavorite,intentMap,onBack}){
   const meta=ARTIST_META[slug]||{};
   const accent=meta.accent||"#8b6cd8";
   const grad=meta.grad||"rgba(139,108,216,0.12)";
@@ -541,6 +542,17 @@ function ArtistPage({slug,entry,cards,checkOwned,manualOwned,manualMissing,favor
   const owned=useMemo(()=>cards.filter(checkOwned).length,[cards,checkOwned]);
   const total=cards.length;
   const pct=total?Math.round((owned/total)*100):0;
+  const intentCounts=useMemo(()=>{
+    const c={want:0,hunting:0,maybe:0,ignore:0};
+    if(intentMap&&intentMap.size)cards.forEach(card=>{if(checkOwned(card))return;const st=intentMap.get(card.id);if(st!==undefined&&c[st]!==undefined)c[st]++;});
+    return c;
+  },[cards,intentMap,checkOwned]);
+  const statusChips=[
+    {label:"Owned",value:owned,clr:"#22c55e"},
+    {label:"Missing",value:total-owned,clr:"#9b9bc0"},
+    ...(intentCounts.hunting>0?[{label:"Hunting",value:intentCounts.hunting,clr:accent}]:[]),
+    ...(intentCounts.want>0?[{label:"Want",value:intentCounts.want,clr:"#9b7fe8"}]:[]),
+  ];
 
   // One pick per named Pokémon in topCardNames — prefer cards with images
   const topCards=useMemo(()=>{
@@ -608,6 +620,13 @@ function ArtistPage({slug,entry,cards,checkOwned,manualOwned,manualMissing,favor
             <span style={{fontSize:".75rem",fontWeight:700,color:pct===100?"#22c55e":accent}}>{pct===100?"Complete ✓":`${pct}%`}</span>
             <span style={{fontSize:".66rem",color:"rgba(190,190,210,0.32)"}}>{owned}/{total}</span>
           </div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:".4rem",marginTop:".85rem"}}>
+            {statusChips.map(ch=>(
+              <span key={ch.label} style={{display:"inline-flex",alignItems:"center",gap:".35rem",padding:"3px 9px",borderRadius:20,background:"rgba(255,255,255,0.03)",border:"1px solid #1e1e35",fontSize:".62rem",letterSpacing:".05em",color:"#6b6b90",whiteSpace:"nowrap"}}>
+                <span style={{fontWeight:800,fontVariantNumeric:"tabular-nums",color:ch.clr}}>{ch.value}</span>{ch.label}
+              </span>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -661,7 +680,7 @@ function ArtistPage({slug,entry,cards,checkOwned,manualOwned,manualMissing,favor
 
       {/* ── full card grid ── */}
       <div style={{maxWidth:860,margin:"0 auto",padding:"1rem"}}>
-        <ArtistSection entry={entry} cards={cards} checkOwned={checkOwned} manualOwned={manualOwned} manualMissing={manualMissing} favorites={favorites} onCardClick={onCardClick} onToggleFavorite={onToggleFavorite} searchQuery={search} sortBy={sortBy} viewMode={viewMode} noHeader/>
+        <ArtistSection entry={entry} cards={cards} checkOwned={checkOwned} manualOwned={manualOwned} manualMissing={manualMissing} favorites={favorites} onCardClick={onCardClick} onToggleFavorite={onToggleFavorite} searchQuery={search} sortBy={sortBy} viewMode={viewMode} intentMap={intentMap} noHeader/>
       </div>
 
     </div>
@@ -670,7 +689,7 @@ function ArtistPage({slug,entry,cards,checkOwned,manualOwned,manualMissing,favor
 
 
 // ── ARTIST SECTION ─────────────────────────────────────────────────────────────
-function ArtistSection({entry,cards,checkOwned,manualOwned,manualMissing,favorites,onCardClick,onToggleFavorite,searchQuery,sortBy,viewMode,readOnly,noHeader}){
+function ArtistSection({entry,cards,checkOwned,manualOwned,manualMissing,favorites,onCardClick,onToggleFavorite,searchQuery,sortBy,viewMode,readOnly,noHeader,intentMap}){
   const isSecondary=entry.tier==="secondary";
   const[open,setOpen]=useState(noHeader||!isSecondary);
   const[showFact,setShowFact]=useState(false);
@@ -704,10 +723,10 @@ function ArtistSection({entry,cards,checkOwned,manualOwned,manualMissing,favorit
       )}
       {(open||noHeader)&&(
         groupedBySet?(
-          <>{(viewMode==="missing"?[{key:"miss",label:"MISSING",count:groupedBySet.missingCount,groups:groupedBySet.missing,ownedFlag:false,hdr:"#9b7ce8",hdrLine:"rgba(139,108,216,0.18)",grpClr:"#4a4a70",divBg:"#0d0d1a"},{key:"own",label:"OWNED",count:groupedBySet.ownedCount,groups:groupedBySet.owned,ownedFlag:true,hdr:"#3a7a4a",hdrLine:"rgba(34,197,94,0.12)",grpClr:"#2a3a2a",divBg:"#09120a"}]:[{key:"own",label:"OWNED",count:groupedBySet.ownedCount,groups:groupedBySet.owned,ownedFlag:true,hdr:"#3a7a4a",hdrLine:"rgba(34,197,94,0.12)",grpClr:"#2a3a2a",divBg:"#09120a"},{key:"miss",label:"MISSING",count:groupedBySet.missingCount,groups:groupedBySet.missing,ownedFlag:false,hdr:"#9b7ce8",hdrLine:"rgba(139,108,216,0.18)",grpClr:"#4a4a70",divBg:"#0d0d1a"}]).filter(s=>s.count>0).map((s,si)=>(<div key={s.key} style={{marginBottom:si===0?"1.5rem":0}}><div style={{display:"flex",alignItems:"center",gap:".6rem",marginBottom:".75rem"}}><span style={{fontSize:".58rem",letterSpacing:".12em",fontWeight:800,color:s.hdr,whiteSpace:"nowrap"}}>{s.label} · {s.count}</span><div style={{flex:1,height:"1px",background:s.hdrLine}}/></div>{s.groups.map((group,gi)=>(<div key={group.name+gi} style={{marginBottom:".7rem"}}><div style={{display:"flex",alignItems:"center",gap:".5rem",marginBottom:".3rem"}}><span style={{fontSize:".58rem",color:s.grpClr,fontWeight:700,letterSpacing:".04em",whiteSpace:"nowrap"}}>{group.name}</span><div style={{flex:1,height:"1px",background:s.divBg}}/><span style={{fontSize:".55rem",color:s.grpClr,whiteSpace:"nowrap",flexShrink:0}}>{group.cards.length}</span></div><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(76px,1fr))",gap:"6px"}}>{group.cards.map(card=><CardTile key={card.id} card={card} owned={s.ownedFlag} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(card.id)} onCardClick={onCardClick} onToggleFavorite={onToggleFavorite} readOnly={readOnly}/>)}</div></div>))}</div>))}</>
+          <>{(viewMode==="missing"?[{key:"miss",label:"MISSING",count:groupedBySet.missingCount,groups:groupedBySet.missing,ownedFlag:false,hdr:"#9b7ce8",hdrLine:"rgba(139,108,216,0.18)",grpClr:"#4a4a70",divBg:"#0d0d1a"},{key:"own",label:"OWNED",count:groupedBySet.ownedCount,groups:groupedBySet.owned,ownedFlag:true,hdr:"#3a7a4a",hdrLine:"rgba(34,197,94,0.12)",grpClr:"#2a3a2a",divBg:"#09120a"}]:[{key:"own",label:"OWNED",count:groupedBySet.ownedCount,groups:groupedBySet.owned,ownedFlag:true,hdr:"#3a7a4a",hdrLine:"rgba(34,197,94,0.12)",grpClr:"#2a3a2a",divBg:"#09120a"},{key:"miss",label:"MISSING",count:groupedBySet.missingCount,groups:groupedBySet.missing,ownedFlag:false,hdr:"#9b7ce8",hdrLine:"rgba(139,108,216,0.18)",grpClr:"#4a4a70",divBg:"#0d0d1a"}]).filter(s=>s.count>0).map((s,si)=>(<div key={s.key} style={{marginBottom:si===0?"1.5rem":0}}><div style={{display:"flex",alignItems:"center",gap:".6rem",marginBottom:".75rem"}}><span style={{fontSize:".58rem",letterSpacing:".12em",fontWeight:800,color:s.hdr,whiteSpace:"nowrap"}}>{s.label} · {s.count}</span><div style={{flex:1,height:"1px",background:s.hdrLine}}/></div>{s.groups.map((group,gi)=>(<div key={group.name+gi} style={{marginBottom:".7rem"}}><div style={{display:"flex",alignItems:"center",gap:".5rem",marginBottom:".3rem"}}><span style={{fontSize:".58rem",color:s.grpClr,fontWeight:700,letterSpacing:".04em",whiteSpace:"nowrap"}}>{group.name}</span><div style={{flex:1,height:"1px",background:s.divBg}}/><span style={{fontSize:".55rem",color:s.grpClr,whiteSpace:"nowrap",flexShrink:0}}>{group.cards.length}</span></div><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(76px,1fr))",gap:"6px"}}>{group.cards.map(card=><CardTile key={card.id} card={card} intentStatus={intentMap?.get(card.id)} owned={s.ownedFlag} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(card.id)} onCardClick={onCardClick} onToggleFavorite={onToggleFavorite} readOnly={readOnly}/>)}</div></div>))}</div>))}</>
         ):(
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(76px,1fr))",gap:"6px"}}>
-            {displayCards.map(card=><CardTile key={card.id} card={card} owned={checkOwned(card)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(card.id)} onCardClick={onCardClick} onToggleFavorite={onToggleFavorite} readOnly={readOnly}/>)}
+            {displayCards.map(card=><CardTile key={card.id} card={card} intentStatus={intentMap?.get(card.id)} owned={checkOwned(card)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(card.id)} onCardClick={onCardClick} onToggleFavorite={onToggleFavorite} readOnly={readOnly}/>)}
           </div>
         )
       )}
@@ -1209,7 +1228,7 @@ function App(){
     const entry=ARTISTS.find(a=>toSlug(a.name)===artistSlug);
     const cards=visibleCardData[artistSlug]||[];
     return(<>
-      <ArtistPage slug={artistSlug} entry={entry} cards={cards} checkOwned={checkOwned} manualOwned={manualOwned} manualMissing={manualMissing} favorites={favorites} onCardClick={setSelectedCard} onToggleFavorite={handleToggleFavorite} onBack={()=>setView("dashboard")}/>
+      <ArtistPage slug={artistSlug} entry={entry} cards={cards} checkOwned={checkOwned} manualOwned={manualOwned} manualMissing={manualMissing} favorites={favorites} onCardClick={setSelectedCard} onToggleFavorite={handleToggleFavorite} intentMap={intentMap} onBack={()=>setView("dashboard")}/>
       {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(selectedCard.id)} priceHistory={priceHistory} onToggleManual={handleToggleManual} onToggleFavorite={handleToggleFavorite} onRecordPrice={handleRecordPrice} onClose={()=>setSelectedCard(null)} intentStatus={intentMap.get(selectedCard.id)} onSetIntent={handleSetIntent} onClearIntent={handleClearIntent}/>}
       <input ref={fileRef} type="file" accept=".csv" onChange={e=>{const f=e.target.files&&e.target.files[0];if(f)handleCSV(f);e.target.value="";}} style={{display:"none"}}/>
     </>);
