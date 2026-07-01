@@ -1,5 +1,85 @@
 # Illustrated — Changelog
 
+## Gate 2 close — Phase 5I — 2026-07-01
+
+Gate 2 Vite migration is complete. `gate-2/vite-migration` merged into `main`
+via PR #2 (merge commit `a03aff7`). No app code, Supabase schema, or product
+behavior was changed during Phase 5I. No feature work was introduced during Gate 2.
+
+Phase 5I status: In progress — PR merged; docs/tag pending.
+
+### Phase 5I — Gate 2 PR and main cleanup
+
+- PR #2 conflict resolved: single file `.github/workflows/build-check-gate2.yml`.
+  Accepted `main`-side version (includes parameterized branch input).
+- PR #2 merged to `main` using merge commit strategy (merge commit `a03aff7`).
+- Merging to `main` created a Vercel Preview deployment only. Production was
+  not affected; it continues to run from the `gate-2/vite-migration` branch.
+- `gate-2/vite-migration` branch retained as rollback reference.
+
+### Phase 5H — Production cutover
+
+- Vercel production branch set to `gate-2/vite-migration`.
+- Apex DNS updated: `A @ 216.198.79.1` → Vercel.
+- Supabase site URL updated to `https://illustratedvault.com`.
+- Supabase redirect URLs updated (old GitHub Pages URL retained for rollback).
+- Production domain `https://illustratedvault.com` now serves Vite/React app.
+- Original production-validated cutover commit: `d707abc`
+  ("Register service worker for Vite app").
+- Validated: auth, session, owned/missing, favorites, pricing, SharedBinder,
+  PWA assets, `/manifest.json`, `/icons/icon-192.png`, `/sw.js`.
+- No Supabase schema changes. No product behavior changes.
+
+Note on subsequent production deployment: after the workflow conflict-resolution
+merge ("Merge branch 'main' into gate-2/vite-migration", commit `4198689`) was
+pushed to `gate-2/vite-migration`, Vercel deployed a new production build. This
+commit changed only `.github/workflows/build-check-gate2.yml`; app behavior is
+identical to `d707abc`.
+
+### Phase 5I www cleanup
+
+- `www.illustratedvault.com` added to Vercel.
+- Redirect configured: `www.illustratedvault.com` → `illustratedvault.com` (307).
+- Porkbun `www` CNAME updated from GitHub Pages to Vercel DNS target.
+- `https://www.illustratedvault.com` redirects cleanly to apex. Validated.
+
+### Phase 5G — Service worker registration
+
+- SW registration script added to `index.html` (Phase 5G).
+- `/sw.js` registered and validated on production.
+
+### Phase 5F — Auth and SharedBinder validation
+
+- Auth/OTP flow validated on live Vercel preview HTTPS URL.
+- SharedBinder real-token resolution validated.
+- Bad share token failure confirmed graceful.
+
+### Phase 5E — Vercel preview deployment
+
+- Vercel project created: `illustrated-vault` (team: Illustrated Vault).
+- PR #2 opened as Draft to trigger Vercel preview integration.
+- Preview deployment validated before production cutover.
+
+### Rollback artifacts retained (not yet cleaned up)
+
+- Root `CNAME` (GitHub Pages domain record)
+- Root `sw.js` (legacy service worker)
+- `index.legacy.html` (single-file source-of-truth reference)
+- `gate-2/vite-migration` branch
+- Old Supabase redirect URL (`https://vladimirbuslayev.github.io/fire-chicken/`)
+- GitHub Pages configuration (not yet disabled)
+
+### Deferred cleanup items
+
+- Vercel production branch → `main` (when stabilization confirmed)
+- GitHub Pages disable
+- Old Supabase redirect URL removal
+- Root `sw.js` and `CNAME` removal from `main`
+- `gate-2/vite-migration` branch deletion
+- `deploy-gate2.yml` review (no longer the production deployment path)
+
+---
+
 ## gate-2/vite-migration branch — 2026-06-25
 
 ### Phase 5D — Gate 2 checkpoint documentation update
@@ -189,7 +269,7 @@ Created:
 - `postcss.config.js`
 - `src/main.jsx` (scaffold placeholder)
 - `src/styles/index.css` (verbatim CSS from legacy `<style>` block)
-- `.github/workflows/deploy-gate2.yml` (manual-only, not triggered)
+- `.github/workflows/deploy-gate2.yml` (manual-only; no longer the production deployment path)
 - `.github/workflows/build-check-gate2.yml` (build-only validation, no deploy)
 - `.gitignore`
 
