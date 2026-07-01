@@ -2,6 +2,39 @@
 
 ---
 
+## 2026-06-26 — Gate 2: Vercel selected as production hosting platform
+
+Decision:
+
+Production deployment moved from GitHub Pages to Vercel. Vercel production
+branch set to `gate-2/vite-migration`. Apex DNS record updated to point to
+Vercel (`A @ 216.198.79.1`).
+
+Reason:
+
+GitHub Pages does not support Vite build output natively — it requires a
+separate deploy workflow that pushes `dist/` to a `gh-pages` branch. Vercel
+provides automatic Vite/React build support, per-branch and per-PR preview
+deployments, and HTTPS without additional CI configuration. The Gate 2
+migration was the appropriate moment for this transition.
+
+Implications:
+
+- The `.github/workflows/deploy-gate2.yml` GitHub Actions workflow (manual
+  GitHub Pages deploy) is no longer the production deployment path. It remains
+  on `main` as a historical Gate 2 artifact only.
+- Vercel production branch is currently `gate-2/vite-migration`, not `main`.
+  Migrating to `main` is a deferred cleanup item for after Gate 2 stabilization.
+- GitHub Pages is not yet disabled. The old GitHub Pages redirect URL in
+  Supabase (`https://vladimirbuslayev.github.io/fire-chicken/`) is not yet
+  removed. Both are retained for rollback safety.
+
+Status:
+
+Accepted. In production since Phase 5H (2026-06-26).
+
+---
+
 ## 2026-06-25 — Gate 2: TCGdex illustrator lookup excluded from tcgdexService.js
 
 Decision:
