@@ -30,6 +30,7 @@ import { lsGet, lsSet, lsDel }                           from './utils/cache.js'
 import { toSlug }                                         from './utils/slug.js';
 import { normName, normNum, normSet, makeKeys, isCardOwned } from './utils/keys.js';
 import { isTcgPocketCard }                               from './utils/cardUtils.js';
+import { fetchUserIntent, setCardIntent, clearCardIntent } from './services/intentService.js';
 import { getBestPrice, sortCards }                        from './utils/sort.js';
 import { fmtPrice, todayStr }                             from './utils/format.js';
 import { imgSmall, imgLarge }                             from './utils/imageUrl.js';
@@ -386,7 +387,7 @@ function PriceChart({history}){
 }
 
 // ── CARD MODAL ─────────────────────────────────────────────────────────────────
-function CardModal({card,owned,manualOwned,manualMissing,isFavorite,priceHistory,onToggleManual,onToggleFavorite,onRecordPrice,onClose,readOnly}){
+function CardModal({card,owned,manualOwned,manualMissing,isFavorite,priceHistory,onToggleManual,onToggleFavorite,onRecordPrice,onClose,readOnly,intentStatus,onSetIntent,onClearIntent}){
   const price=getBestPrice(card);
   const allVariants=card&&card.pricing&&card.pricing.tcgplayer?card.pricing.tcgplayer:{};
   const cmPrices=card&&card.pricing&&card.pricing.cardmarket&&card.pricing.cardmarket.prices?card.pricing.cardmarket.prices:null;
@@ -497,6 +498,17 @@ function CardModal({card,owned,manualOwned,manualMissing,isFavorite,priceHistory
           <div style={{fontSize:".68rem",color:"#6b6b90",marginBottom:".4rem"}}>Price History</div>
           <PriceChart history={cardHistory}/>
         </div>
+
+        {!readOnly&&!owned&&onSetIntent&&(
+          <div style={{marginBottom:".75rem"}}>
+            <div style={{fontSize:".65rem",color:"#6b6b90",marginBottom:".4rem"}}>Hunt status</div>
+            <div style={{display:"flex",gap:".35rem"}}>
+              {['want','hunting','maybe','ignore'].map(s=>(
+                <button key={s} onClick={()=>intentStatus===s?onClearIntent(card.id):onSetIntent(card,s)} style={{flex:1,background:intentStatus===s?"rgba(139,108,216,0.18)":"#141425",color:intentStatus===s?"#9b7fe8":"#4a4a70",border:`1px solid ${intentStatus===s?"#5a3d9e":"#1e1e35"}`,borderRadius:7,padding:".35rem .3rem",cursor:"pointer",fontSize:".68rem",fontWeight:intentStatus===s?700:500,textTransform:"capitalize"}}>{s}</button>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div style={{display:"flex",gap:".5rem"}}>
           <a href={tcgplayerUrl} target="_blank" rel="noopener noreferrer" style={{flex:1,display:"block",textAlign:"center",background:"#1a1430",color:"#9b7fe8",padding:".5rem",borderRadius:8,textDecoration:"none",fontSize:".75rem",border:"1px solid #2e2255",fontWeight:500}}>TCGPlayer →</a>
@@ -1132,6 +1144,28 @@ function App(){
   const toggleHideTcgPocket=()=>setHideTcgPocket(v=>{const n=!v;lsSet("pb_hide_tcgp",n);return n;});
   const toggleShowAllColor=()=>setShowAllColor(v=>{const n=!v;lsSet("pb_show_all_color",n);return n;});
 
+  const[intentMap,setIntentMap]=useState(new Map());
+  useEffect(()=>{
+    if(!user){setIntentMap(new Map());return;}
+    fetchUserIntent(user.id).then(m=>setIntentMap(m)).catch(console.error);
+  },[user&&user.id]);
+
+  const handleSetIntent=useCallback(async(card,status)=>{
+    if(!user)return;
+    const prev=intentMap.get(card.id);
+    setIntentMap(m=>{const n=new Map(m);n.set(card.id,status);return n;});
+    try{await setCardIntent(user.id,card.id,status);}
+    catch(err){setIntentMap(m=>{const n=new Map(m);prev===undefined?n.delete(card.id):n.set(card.id,prev);return n;});console.error('setIntent failed:',err);}
+  },[user,intentMap]);
+
+  const handleClearIntent=useCallback(async(cardId)=>{
+    if(!user)return;
+    const prev=intentMap.get(cardId);
+    setIntentMap(m=>{const n=new Map(m);n.delete(cardId);return n;});
+    try{await clearCardIntent(user.id,cardId);}
+    catch(err){setIntentMap(m=>{const n=new Map(m);prev!==undefined&&n.set(cardId,prev);return n;});console.error('clearIntent failed:',err);}
+  },[user,intentMap]);
+
   // The raw cardData (used for caching, CSV matching, etc.) stays untouched —
   // this is only the display/stat layer, so toggling never affects ownership data.
   const visibleCardData=useMemo(()=>{
@@ -1166,7 +1200,7 @@ function App(){
   if(view==="dashboard")return(
     <>
       <Dashboard cardData={visibleCardData} checkOwned={checkOwned} favorites={favorites} user={user} csvStatus={csvStatus} syncStatus={syncStatus} onGoBinder={goTo} onUploadCSV={()=>fileRef.current&&fileRef.current.click()} loadingSet={loadingSet} errors={errors} onCardClick={setSelectedCard}/>
-      {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(selectedCard.id)} priceHistory={priceHistory} onToggleManual={handleToggleManual} onToggleFavorite={handleToggleFavorite} onRecordPrice={handleRecordPrice} onClose={()=>setSelectedCard(null)}/>}
+      {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(selectedCard.id)} priceHistory={priceHistory} onToggleManual={handleToggleManual} onToggleFavorite={handleToggleFavorite} onRecordPrice={handleRecordPrice} onClose={()=>setSelectedCard(null)} intentStatus={intentMap.get(selectedCard.id)} onSetIntent={handleSetIntent} onClearIntent={handleClearIntent}/>}
       <input ref={fileRef} type="file" accept=".csv" onChange={e=>{const f=e.target.files&&e.target.files[0];if(f)handleCSV(f);e.target.value="";}} style={{display:"none"}}/>
     </>
   );
@@ -1176,7 +1210,7 @@ function App(){
     const cards=visibleCardData[artistSlug]||[];
     return(<>
       <ArtistPage slug={artistSlug} entry={entry} cards={cards} checkOwned={checkOwned} manualOwned={manualOwned} manualMissing={manualMissing} favorites={favorites} onCardClick={setSelectedCard} onToggleFavorite={handleToggleFavorite} onBack={()=>setView("dashboard")}/>
-      {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(selectedCard.id)} priceHistory={priceHistory} onToggleManual={handleToggleManual} onToggleFavorite={handleToggleFavorite} onRecordPrice={handleRecordPrice} onClose={()=>setSelectedCard(null)}/>}
+      {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(selectedCard.id)} priceHistory={priceHistory} onToggleManual={handleToggleManual} onToggleFavorite={handleToggleFavorite} onRecordPrice={handleRecordPrice} onClose={()=>setSelectedCard(null)} intentStatus={intentMap.get(selectedCard.id)} onSetIntent={handleSetIntent} onClearIntent={handleClearIntent}/>}
       <input ref={fileRef} type="file" accept=".csv" onChange={e=>{const f=e.target.files&&e.target.files[0];if(f)handleCSV(f);e.target.value="";}} style={{display:"none"}}/>
     </>);
   }
@@ -1255,7 +1289,7 @@ function App(){
         <div style={{marginTop:"3rem",paddingTop:"1rem",borderTop:"1px solid #1e1e35",fontSize:".62rem",color:"#2a2a3a",textAlign:"center",letterSpacing:".1em"}}>Komiya · Morii · Kanda · Nishida</div>
       </main>
 
-      {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(selectedCard.id)} priceHistory={priceHistory} onToggleManual={handleToggleManual} onToggleFavorite={handleToggleFavorite} onRecordPrice={handleRecordPrice} onClose={()=>setSelectedCard(null)}/>}
+      {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(selectedCard.id)} priceHistory={priceHistory} onToggleManual={handleToggleManual} onToggleFavorite={handleToggleFavorite} onRecordPrice={handleRecordPrice} onClose={()=>setSelectedCard(null)} intentStatus={intentMap.get(selectedCard.id)} onSetIntent={handleSetIntent} onClearIntent={handleClearIntent}/>}
       {showSettings&&<SettingsPanel onClose={()=>setShowSettings(false)} onClearCache={clearCache} onClearManual={clearManual} onSignOut={()=>{handleSignOut();setShowSettings(false);}} hideTcgPocket={hideTcgPocket} onToggleTcgPocket={toggleHideTcgPocket} user={user} onUploadCSV={()=>fileRef.current&&fileRef.current.click()}/>}
     </div>
   );
