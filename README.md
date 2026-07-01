@@ -16,11 +16,12 @@ The project is currently in MVP stage.
 
 The app is deployed through Vercel at https://illustratedvault.com.
 
-Gate 2 is complete. The Vite/React app is now in production, served from the
-`gate-2/vite-migration` branch via Vercel. `main` contains the merged Vite project.
+Gate 2 is fully closed. The Vite/React app is in production, served by Vercel
+from the `main` branch. No Gate 2 rollback or deferred cleanup remains. Minor
+future hygiene, such as renaming the manual build-check workflow, is outside
+Gate 2 closure.
 
-Current focus: post-Gate-2 stabilization. Deferred cleanup (Vercel production branch
-migration to `main`, legacy files, GitHub Pages, Supabase redirect URLs) is in progress.
+Current focus: Gate 3.
 
 ## Documentation
 
@@ -32,4 +33,3 @@ See:
 - [Roadmap](docs/ROADMAP.md)
 - [Decision Log](docs/DECISION_LOG.md)
 - [Changelog](docs/CHANGELOG.md)
-
