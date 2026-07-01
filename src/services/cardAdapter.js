@@ -2,9 +2,13 @@
 // Maps a Supabase cards_effective row to the TCGdex card shape the UI expects.
 // Source: index.legacy.html lines 387-399.
 //
-// Do NOT alter field mappings — the card shape is consumed throughout the app
-// and must stay stable until a deliberate data-shape migration is planned.
+// Do NOT alter existing field mappings — the card shape is consumed throughout
+// the app and must stay stable until a deliberate data-shape migration is planned.
 // cards_effective is the frontend read model; this adapter is its translation layer.
+//
+// Gate 3D: artistId added as a passthrough from cards_effective.artist_id.
+// Nothing in the current app reads card.artistId — it is available for future use
+// (e.g. artist completion counts in Gate 3F).
 
 function supaRowToCard(row) {
   return {
@@ -13,6 +17,7 @@ function supaRowToCard(row) {
     localId:          row.local_id,
     rarity:           row.rarity             || null,
     illustrator:      row.illustrator,
+    artistId:         row.artist_id          || null,
     image:            row.image_url          || null,
     set:              { id: row.set_id, name: row.set_name || row.set_id },
     pricing:          row.pricing            || null,
