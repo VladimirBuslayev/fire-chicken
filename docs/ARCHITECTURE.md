@@ -4,16 +4,12 @@ Last updated: 2026-07-01
 
 ## Production architecture
 
-Production at `https://illustratedvault.com` is served from Vercel.
-Vercel production branch: `gate-2/vite-migration`.
+Production at `https://illustratedvault.com` is served by Vercel from the
+`main` branch.
 
-The app is a Vite 5 / React 18 build. Vercel runs `npm install && npm run build`
-on push to the production branch and serves `dist/` directly.
-
-`main` now contains the same Vite project structure (merged via PR #2,
-merge commit `a03aff7`). Merging to `main` created a Vercel Preview deployment
-only — it did not affect production. Migrating the Vercel production branch
-from `gate-2/vite-migration` to `main` is a deferred cleanup item.
+Vercel runs `npm install && npm run build` on push to `main` and serves
+`dist/` directly. No manual deploy workflow is involved. The legacy
+`.github/workflows/deploy-gate2.yml` was removed in commit `77b7a15`.
 
 ## Data source principles (unchanged)
 
@@ -23,7 +19,7 @@ TCGdex runtime usage is restricted: `tcgdexService.js` permits only the `entry.i
 
 Pricing data is adapted at write time in `sync-cards.mjs`, not at read time in the frontend. Pricing is buying guidance.
 
-## Current module structure (main and gate-2/vite-migration)
+## Current module structure (main)
 
 ```
 src/
@@ -61,19 +57,22 @@ public/
     icon-192.png
     icon-512.png
   sw.js
+docs/
+  archive/
+    index.legacy.html
 index.html
-index.legacy.html        — rollback reference; do not delete yet
 package.json
 vite.config.js
 tailwind.config.js
 postcss.config.js
-sw.js                    — root legacy service worker; rollback reference; do not delete yet
-CNAME                    — GitHub Pages domain record; rollback reference; do not delete yet
+.github/
+  workflows/
+    build-check-gate2.yml  — manual-only; does not deploy
 ```
 
 ## Component boundary — current state
 
-`src/App.jsx` is the component root. It is a single 1,266-line file containing the full component tree. This is intentional for Gate 2 — it mirrors the legacy single-file approach while operating inside the Vite module system. Component splitting into `src/components/` files is deferred to Phase 7, after Gate 2 stabilization is confirmed.
+`src/App.jsx` is the component root. It is a single 1,266-line file containing the full component tree. This is intentional for Gate 2 — it mirrors the legacy single-file approach while operating inside the Vite module system. Component splitting into `src/components/` files is deferred to Phase 7.
 
 `src/main.jsx` is the Vite entry point. It:
 - imports `{ App, SharedBinder, ErrorBoundary }` from `./App.jsx`
@@ -188,44 +187,25 @@ This RPC is the only stored procedure the frontend calls. It powers the public s
 
 ## Deployment — current state
 
-Production is served by Vercel from the `gate-2/vite-migration` branch. Vercel
-builds automatically on push to that branch.
+Production is served by Vercel from the `main` branch. Vercel builds
+automatically on push to `main`.
 
-Merging PR #2 into `main` created a Vercel Preview deployment (commit `a03aff7`,
-environment: Preview). It did not change or create a new Production deployment.
-
-The manual GitHub Actions workflow `.github/workflows/build-check-gate2.yml`
-remains on `main` as a `workflow_dispatch`-only build smoke test. It never
-triggers automatically and does not deploy anything.
-
-The manual GitHub Actions workflow `.github/workflows/deploy-gate2.yml` is no
-longer the production deployment path. It remains on `main` as a historical
-Gate 2 artifact only.
+`.github/workflows/build-check-gate2.yml` remains on `main` as a
+`workflow_dispatch`-only build smoke test. It never triggers automatically,
+does not deploy anything, and can be pointed at any branch via its input
+parameter. Minor future hygiene, such as renaming this workflow, is outside
+Gate 2 closure.
 
 ## Service worker
 
 `public/sw.js` is the Vite app service worker. Service worker registration is
-present in `index.html` (added in Phase 5G, before production cutover). The SW
-is registered and validated in production.
-
-Root `sw.js` also remains in the repo as a legacy rollback artifact. Do not
-delete until GitHub Pages rollback window closes.
+present in `index.html` (added in Phase 5G). Registered and validated in
+production.
 
 ## Future direction — post Gate 2
 
-After Gate 2 stabilization is confirmed and deferred cleanup is complete:
-
-- Vercel production branch migration: `gate-2/vite-migration` → `main`
 - Component extraction: split `src/App.jsx` into `src/components/` files (Phase 7+)
 - Shared hooks: `useCardData`, `useCollection` (Phase 8+)
 - Artist Directory / Add Artist flow (backlog)
 - Set browsing (backlog)
 - Freemium model / public collection pages (deferred)
-
-## Constraints active through Gate 2 stabilization
-
-- `index.legacy.html` must not be modified (rollback reference)
-- Root `sw.js` and `CNAME` must not be deleted yet (rollback reference)
-- Supabase schema, SQL, tables, views, policies, RPCs must not be modified
-- TCGdex runtime usage must remain limited to `entry.isSet` paths
-- `cards_effective` must remain the artist-path read model
