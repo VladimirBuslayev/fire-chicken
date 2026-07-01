@@ -430,7 +430,7 @@ function CardModal({card,owned,manualOwned,manualMissing,isFavorite,priceHistory
           <div style={{flex:1,minWidth:0}}>
             <div style={{display:"flex",alignItems:"center",gap:".5rem"}}>
               <h2 style={{fontWeight:700,fontSize:"1.05rem",color:"#e8e8f4"}}>{card.name}</h2>
-              {!readOnly&&<button onClick={()=>onToggleFavorite(card.id)} style={{background:isFavorite?"rgba(255,200,30,0.15)":"rgba(255,255,255,0.05)",border:`1px solid ${isFavorite?"rgba(255,200,30,0.4)":"#1e1e35"}`,borderRadius:6,padding:"2px 7px",cursor:"pointer",fontSize:".75rem",color:isFavorite?"#E8C030":"#4a4a70",flexShrink:0}}>{isFavorite?"★ Wanted":"☆ Want"}</button>}
+              {!readOnly&&<button onClick={()=>onToggleFavorite(card.id)} style={{background:isFavorite?"rgba(255,200,30,0.15)":"rgba(255,255,255,0.05)",border:`1px solid ${isFavorite?"rgba(255,200,30,0.4)":"#1e1e35"}`,borderRadius:6,padding:"2px 7px",cursor:"pointer",fontSize:".75rem",color:isFavorite?"#E8C030":"#4a4a70",flexShrink:0}}>{isFavorite?"★ Favorite":"☆ Favorite"}</button>}
             </div>
             <div style={{fontSize:".7rem",color:"#6b6b90",marginTop:2}}>{card.set&&card.set.name} · #{card.localId} · {card.rarity}</div>
           </div>
