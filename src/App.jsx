@@ -1,0 +1,1266 @@
+// src/App.jsx
+// Gate 2 — Phase 5B: Full React component tree port from index.legacy.html.
+//
+// Source: index.legacy.html lines 446–1665 (JSX/component block).
+// Lines 96–445 (constants, utils, services) are in their Phase 3/4 modules.
+// Lines 1666–1667 (ReactDOM.createRoot + SHARE_TOKEN) are in src/main.jsx.
+//
+// Substitutions applied (behavior unchanged):
+//   LOGO_DATA_URI → import logoSrc (same asset, Phase 2A extraction)
+//   fmt$()        → fmtPrice()     (renamed in format.js; identical logic)
+//   sb.*          → supabase.*     (ES module client; identical connection)
+//   Papa          → import Papa    (same papaparse@5.4.1; identical API)
+//
+// REDIRECT (line 103) defined but never referenced in component code — omitted.
+// useEnter/useLeave: not custom hooks; are onMouseEnter/onMouseLeave JSX props.
+//
+// Do not add features, redesign, or change behavior during Gate 2.
+
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import Papa from 'papaparse';
+import logoSrc from './assets/logo.webp';
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+import { ARTISTS, ARTIST_FACTS, ARTIST_META } from './constants/artists.js';
+import { SET_ORDER }                           from './constants/setOrder.js';
+import { CACHE_TTL, PRICE_VARIANT_ORDER }       from './constants/config.js';
+
+// ── Utils ─────────────────────────────────────────────────────────────────────
+import { lsGet, lsSet, lsDel }                           from './utils/cache.js';
+import { toSlug }                                         from './utils/slug.js';
+import { normName, normNum, normSet, makeKeys, isCardOwned } from './utils/keys.js';
+import { isTcgPocketCard }                               from './utils/cardUtils.js';
+import { getBestPrice, sortCards }                        from './utils/sort.js';
+import { fmtPrice, todayStr }                             from './utils/format.js';
+import { imgSmall, imgLarge }                             from './utils/imageUrl.js';
+
+// ── Services ──────────────────────────────────────────────────────────────────
+import { supabase }                                       from './services/supabaseClient.js';
+import { loadUserData, saveCollection, saveOverride, savePricePoint }
+                                                          from './services/collectionService.js';
+import { fetchSharedCollection }                          from './services/shareService.js';
+import { fetchArtistCards }                               from './services/cardService.js';
+import { fetchFallbackImage, buildLimitlessGuess }        from './services/imageService.js';
+
+// ── ICONS ─────────────────────────────────────────────────────────────────────
+const Ico=({children,size})=><svg width={size||16} height={size||16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{children}</svg>;
+const IcoSearch=()=><Ico><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></Ico>;
+const IcoUpload=()=><Ico><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></Ico>;
+const IcoX    =()=><Ico><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></Ico>;
+const IcoGear =()=><Ico><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></Ico>;
+const IcoCheck=()=><Ico><polyline points="20 6 9 17 4 12"/></Ico>;
+const IcoRetry=()=><Ico><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.51"/></Ico>;
+const IcoEdit =()=><Ico><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></Ico>;
+const IcoSpin =({size})=><svg className="spinner" width={size||14} height={size||14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 2a10 10 0 0 1 0 20A10 10 0 0 1 12 2" strokeOpacity="0.2"/><path d="M12 2a10 10 0 0 1 10 10"/></svg>;
+const IcoChev =({open})=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" style={{transform:open?"rotate(0deg)":"rotate(-90deg)",transition:"transform .2s ease",flexShrink:0}}><polyline points="6 9 12 15 18 9"/></svg>;
+const IcoNoImage=({size})=><svg width={size||20} height={size||20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="1.4"/><path d="m21 15-5-5L5 21"/><line x1="2.5" y1="2.5" x2="21.5" y2="21.5" opacity="0.45"/></svg>;
+const IcoInfo=()=><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="11" x2="12" y2="16.5"/><circle cx="12" cy="7.5" r="0.5" fill="currentColor" stroke="none"/></svg>;
+const IcoEye=()=><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg>;
+const IcoContrast=()=><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" stroke="none"/></svg>;
+
+// ── BLAZIKEN LOGO ──────────────────────────────────────────────────────────────
+function BlazLogo({size=32,glow=false}){
+  return(
+    <img src={logoSrc} width={size} height={size} alt="Illustrated"
+      style={{display:"block",filter:glow?"drop-shadow(0 0 14px rgba(234,37,21,0.75))":"none"}}/>
+  );
+}
+
+// ── FLAME BACKGROUND ──────────────────────────────────────────────────────────
+const FDEFS=[
+  {left:"8%", w:70, h:260,blur:14,delay:0,  dur:2.1,anim:"flameFlicker"},
+  {left:"18%",w:45, h:180,blur:10,delay:.4, dur:1.7,anim:"flameFlicker2"},
+  {left:"30%",w:90, h:310,blur:18,delay:.15,dur:2.4,anim:"flameFlicker"},
+  {left:"42%",w:55, h:220,blur:12,delay:.7, dur:1.9,anim:"flameFlicker2"},
+  {left:"54%",w:100,h:340,blur:20,delay:.05,dur:2.2,anim:"flameFlicker"},
+  {left:"66%",w:60, h:200,blur:11,delay:.55,dur:1.8,anim:"flameFlicker2"},
+  {left:"78%",w:80, h:280,blur:16,delay:.3, dur:2.0,anim:"flameFlicker"},
+  {left:"90%",w:50, h:170,blur:9, delay:.65,dur:1.6,anim:"flameFlicker2"},
+];
+const EDEFS=Array.from({length:22},(_,i)=>({left:(5+i*4.2+Math.sin(i*1.3)*8)%95+"%",size:3+(i%4),delay:(i*.37)%4,dur:2.2+(i%3)*.8}));
+function FlameBackground({dim}){
+  const op=dim?.5:1;
+  return(<>
+    <div style={{position:"absolute",bottom:0,left:0,right:0,height:"65%",overflow:"hidden",opacity:op}}>
+      {FDEFS.map((f,i)=><div key={i} style={{position:"absolute",bottom:0,left:f.left,marginLeft:-f.w/2,width:f.w,height:f.h,background:"linear-gradient(to top,#ff2200 0%,#ff6600 40%,#ffaa00 70%,#ffe066 90%,transparent 100%)",borderRadius:"50% 50% 25% 25% / 55% 55% 45% 45%",filter:`blur(${f.blur}px)`,transformOrigin:"bottom center",animation:`${f.anim} ${f.dur}s ${f.delay}s ease-in-out infinite`,opacity:.88}}/>)}
+    </div>
+    <div style={{position:"absolute",inset:0,overflow:"hidden",pointerEvents:"none",opacity:op}}>
+      {EDEFS.map((e,i)=><div key={i} style={{position:"absolute",bottom:"15%",left:e.left,width:e.size,height:e.size,borderRadius:"50%",background:"#ff9900",boxShadow:`0 0 ${e.size*2}px #ff4400`,animation:`emberRise ${e.dur}s ${e.delay}s ease-out infinite`,opacity:0}}/>)}
+    </div>
+    <div style={{position:"absolute",bottom:0,left:0,right:0,height:120,background:"linear-gradient(to top,rgba(255,60,0,0.35),transparent)",animation:"glowPulse 2.5s ease-in-out infinite",opacity:op}}/>
+  </>);
+}
+
+// ── LANDING / AUTH ────────────────────────────────────────────────────────────
+function LandingPage({user,onEnter,onSendLink,onVerifyCode,onSignOut}){
+  const[email,setEmail]=useState("");
+  const[linkSent,setLinkSent]=useState(false);
+  const[sending,setSending]=useState(false);
+  const[error,setError]=useState("");
+  const[exiting,setExiting]=useState(false);
+  const[code,setCode]=useState("");
+  const[verifying,setVerifying]=useState(false);
+  const[codeError,setCodeError]=useState("");
+  const isLoggedIn=!!user;
+  const enter=()=>{setExiting(true);setTimeout(onEnter,420);};
+  useEffect(()=>{const fn=e=>{if(e.key==="Enter"&&isLoggedIn)enter();};window.addEventListener("keydown",fn);return()=>window.removeEventListener("keydown",fn);},[isLoggedIn]);
+  const send=async()=>{if(!email.trim())return;setSending(true);setError("");try{await onSendLink(email.trim());setLinkSent(true);}catch(err){setError(err.message||"Failed to send.");}finally{setSending(false);}};
+  const verify=async()=>{if(!code.trim())return;setVerifying(true);setCodeError("");try{await onVerifyCode(email.trim(),code.trim());}catch(err){setCodeError(err.message||"That code didn't work.");}finally{setVerifying(false);}};
+  const cardStyle={background:"rgba(7,7,15,0.78)",border:"1px solid rgba(255,100,0,0.18)",borderRadius:16,padding:"1.75rem",maxWidth:360,width:"100%",backdropFilter:"blur(14px)",WebkitBackdropFilter:"blur(14px)"};
+  const inputStyle={width:"100%",background:"rgba(255,255,255,0.06)",border:"1px solid rgba(255,100,0,0.3)",borderRadius:10,color:"#fff8f0",padding:".65rem 1rem",fontSize:"1rem",marginBottom:".75rem",outline:"none"};
+  return(
+    <div className={exiting?"landing-exit":""} onClick={isLoggedIn?enter:undefined}
+      style={{position:"fixed",inset:0,zIndex:9999,cursor:isLoggedIn?"pointer":"default",background:"radial-gradient(ellipse at 50% 110%,#3d0f00 0%,#1a0500 40%,#080200 70%,#030100 100%)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
+      <FlameBackground/>
+      <div className="fade-in" style={{position:"relative",zIndex:10,textAlign:"center",padding:"1rem",width:"100%",maxWidth:400}}>
+        <div style={{position:"relative",display:"flex",justifyContent:"center",marginBottom:"1.25rem"}}>
+          <div style={{position:"absolute",width:200,height:200,borderRadius:"50%",background:"radial-gradient(circle,rgba(198,87,143,0.5) 0%,rgba(21,3,83,0.35) 55%,transparent 75%)",filter:"blur(18px)",animation:"cosmicBreathe 4.5s ease-in-out infinite",pointerEvents:"none"}}/>
+          <BlazLogo size={80} glow/>
+        </div>
+        <h1 className="font-display" style={{position:"relative",fontSize:"clamp(2.4rem,9vw,4.2rem)",fontWeight:700,letterSpacing:"-.02em",lineHeight:1,marginBottom:".7rem",backgroundImage:"linear-gradient(90deg,#fcd99d 0%,#f38e29 22%,#ea2515 45%,#c6578f 70%,#150353 100%)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",backgroundClip:"text",filter:"drop-shadow(0 0 28px rgba(234,37,21,0.45))"}}>
+          Illustrated
+        </h1>
+        {isLoggedIn?(
+          <>
+            <p style={{fontSize:".78rem",color:"#5a2a10",fontStyle:"italic",marginBottom:"2.25rem",letterSpacing:".04em"}}>The art is the point.</p>
+            <button onClick={e=>{e.stopPropagation();enter();}} style={{background:"linear-gradient(135deg,#ff5500,#ff2200)",color:"#fff8f0",border:"none",borderRadius:50,padding:".9rem 3rem",fontSize:"1rem",fontWeight:800,cursor:"pointer",letterSpacing:".1em",boxShadow:"0 0 40px rgba(255,60,0,0.6),0 0 80px rgba(255,60,0,0.3)"}}
+              onMouseEnter={e=>e.currentTarget.style.transform="scale(1.06)"} onMouseLeave={e=>e.currentTarget.style.transform="scale(1)"}>
+              ENTER BINDER
+            </button>
+            <div style={{marginTop:"1.5rem",display:"flex",alignItems:"center",justifyContent:"center",gap:".75rem"}}>
+              <span style={{fontSize:".68rem",color:"#4a2010"}}>{user.email}</span>
+              <button onClick={e=>{e.stopPropagation();onSignOut();}} style={{fontSize:".68rem",color:"#ff6633",background:"none",border:"1px solid rgba(255,100,50,0.2)",borderRadius:6,padding:"2px 8px",cursor:"pointer"}}>Sign out</button>
+            </div>
+          </>
+        ):linkSent?(
+          <div onClick={e=>e.stopPropagation()} style={{...cardStyle,marginTop:"1rem"}}>
+            <div style={{fontSize:"2rem",marginBottom:".75rem"}}>📬</div>
+            <h2 style={{fontSize:"1.05rem",fontWeight:700,color:"#fff8f0",marginBottom:".5rem"}}>Check your email</h2>
+            <p style={{fontSize:".82rem",color:"#ff9944",marginBottom:"1rem",lineHeight:1.5}}>Sent to <strong style={{color:"#fff8f0"}}>{email}</strong>. Tap the link if you're on desktop or in a regular browser tab.</p>
+            <div style={{borderTop:"1px solid rgba(255,100,0,0.18)",paddingTop:".9rem",marginBottom:".9rem"}}>
+              <p style={{fontSize:".7rem",color:"#c87840",marginBottom:".55rem",lineHeight:1.4}}>Installed the app to your home screen? Tapping the link opens it in your browser instead — type the code from the same email here instead, it'll sign in right in the app.</p>
+              <input type="text" inputMode="numeric" placeholder="123456" value={code} onChange={e=>setCode(e.target.value)} onKeyDown={e=>e.key==="Enter"&&verify()} style={{...inputStyle,marginBottom:".5rem",textAlign:"center",letterSpacing:".2em",fontSize:"1.1rem"}}/>
+              {codeError&&<p style={{fontSize:".72rem",color:"#f87171",marginBottom:".5rem"}}>{codeError}</p>}
+              <button onClick={verify} disabled={verifying||!code.trim()} style={{width:"100%",background:"linear-gradient(135deg,#ff5500,#ff2200)",color:"#fff8f0",border:"none",borderRadius:10,padding:".65rem",fontSize:".85rem",fontWeight:800,cursor:"pointer",opacity:(verifying||!code.trim())?.45:1}}>{verifying?"Checking…":"Enter Code"}</button>
+            </div>
+            <button onClick={()=>{setLinkSent(false);setCode("");setCodeError("");}} style={{background:"none",border:"1px solid rgba(255,100,0,0.3)",color:"#ff9944",borderRadius:8,padding:".45rem 1rem",cursor:"pointer",fontSize:".78rem"}}>Try a different email</button>
+          </div>
+        ):(
+          <div onClick={e=>e.stopPropagation()} style={{...cardStyle,marginTop:"1rem"}}>
+            <p style={{fontSize:".82rem",color:"#c87040",marginBottom:"1rem",lineHeight:1.5,fontStyle:"italic"}}>The art is the point.</p>
+            <input type="email" placeholder="your@email.com" value={email} onChange={e=>setEmail(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()} style={inputStyle} autoFocus/>
+            {error&&<p style={{fontSize:".72rem",color:"#f87171",marginBottom:".5rem"}}>{error}</p>}
+            <button onClick={send} disabled={sending||!email.trim()} style={{width:"100%",background:"linear-gradient(135deg,#ff5500,#ff2200)",color:"#fff8f0",border:"none",borderRadius:10,padding:".75rem",fontSize:".95rem",fontWeight:800,cursor:"pointer",boxShadow:"0 0 30px rgba(255,60,0,0.4)",opacity:(sending||!email.trim())?.45:1}}>
+              {sending?"Sending…":"Send Magic Link 🔥"}
+            </button>
+            <p style={{marginTop:".65rem",fontSize:".65rem",color:"#4a2810",lineHeight:1.4}}>No password. One click and you're in.</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── DASHBOARD ─────────────────────────────────────────────────────────────────
+function Dashboard({cardData,checkOwned,favorites,user,onGoBinder,onUploadCSV,csvStatus,syncStatus,loadingSet,errors,onCardClick}){
+  const totalCards=useMemo(()=>Object.values(cardData).reduce((s,a)=>s+a.length,0),[cardData]);
+  const totalOwned=useMemo(()=>Object.values(cardData).reduce((s,a)=>s+a.filter(checkOwned).length,0),[cardData,checkOwned]);
+  const totalPct=totalCards?Math.round((totalOwned/totalCards)*100):0;
+
+  const artistStats=useMemo(()=>ARTISTS.map(entry=>{
+    const cards=cardData[toSlug(entry.name)]||[];
+    const owned=cards.filter(checkOwned).length;
+    return{...entry,cards,total:cards.length,owned,pct:cards.length?Math.round((owned/cards.length)*100):0};
+  }).filter(a=>a.total>0),[cardData,checkOwned]);
+
+  const mostWanted=useMemo(()=>{
+    const w=[];
+    ARTISTS.forEach(entry=>{
+      (cardData[toSlug(entry.name)]||[]).forEach(card=>{
+        if(favorites.has(card.id)&&!checkOwned(card))w.push({card,artist:entry});
+      });
+    });
+    return w;
+  },[cardData,favorites,checkOwned]);
+
+  const[showAllWanted,setShowAllWanted]=useState(false);
+  const visibleWanted=showAllWanted?mostWanted:mostWanted.slice(0,3);
+  const mainStats=artistStats.filter(a=>a.tier==="main");
+  const secStats =artistStats.filter(a=>a.tier!=="main");
+  const syncIcon =syncStatus==="syncing"?<IcoSpin/>:syncStatus==="synced"?<span style={{color:"#22c55e",fontSize:".65rem"}}>✓</span>:null;
+
+  return(
+    <div style={{minHeight:"100dvh",background:"#07070f",paddingBottom:"5rem"}}>
+      <header style={{position:"sticky",top:0,zIndex:100,background:"rgba(7,7,15,0.97)",backdropFilter:"blur(18px)",borderBottom:"1px solid #1e1e35"}}>
+        <div style={{maxWidth:900,margin:"0 auto",padding:".6rem 1rem",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <div style={{display:"flex",alignItems:"center",gap:".6rem",cursor:"pointer"}} onClick={()=>onGoBinder("landing")}>
+            <BlazLogo size={28}/>
+            <span className="font-display" style={{fontWeight:600,fontSize:"1.02rem",color:"#e8e8f4",letterSpacing:"-.01em"}}>Illustrated</span>
+          </div>
+          <div style={{display:"flex",gap:".4rem",alignItems:"center"}}>
+            {csvStatus==="loading"&&<span style={{fontSize:".7rem",color:"#6b6b90",display:"flex",alignItems:"center",gap:4}}><IcoSpin/>Reading…</span>}
+            {csvStatus?.count&&<span style={{fontSize:".7rem",color:"#22c55e"}}>✓ {csvStatus.count} cards</span>}
+            {syncIcon&&<span style={{display:"flex",alignItems:"center",gap:3}}>{syncIcon}</span>}
+            <button onClick={onUploadCSV} className="btn-ghost" style={{display:"flex",alignItems:"center",gap:".3rem",color:"#8b6cd8",borderRadius:8,padding:".35rem .6rem",fontSize:".72rem",fontWeight:600}}>
+              <IcoUpload/> CSV
+            </button>
+            <button onClick={()=>onGoBinder("binder")} className="btn-flame" style={{borderRadius:8,padding:".35rem .75rem",fontSize:".72rem",fontWeight:700,letterSpacing:".03em"}}>
+              Open Binder →
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <div style={{maxWidth:900,margin:"0 auto",padding:"0 1rem"}}>
+        {loadingSet&&loadingSet.size>0&&(
+          <div style={{marginTop:"1.5rem",padding:".7rem 1rem",background:"rgba(139,108,216,0.08)",border:"1px solid rgba(139,108,216,0.25)",borderRadius:10,display:"flex",alignItems:"center",gap:".6rem",fontSize:".8rem",color:"#9b9bc0"}}>
+            <IcoSpin/>
+            <span>Loading card data — {ARTISTS.length-loadingSet.size}/{ARTISTS.length} artists ready. First load can take up to a minute, this page will fill in automatically.</span>
+          </div>
+        )}
+        {errors&&Object.keys(errors).length>0&&(
+          <div style={{marginTop:loadingSet&&loadingSet.size>0?".6rem":"1.5rem",padding:".6rem 1rem",background:"rgba(248,113,113,0.08)",border:"1px solid rgba(248,113,113,0.25)",borderRadius:10,fontSize:".78rem",color:"#f87171"}}>
+            ⚠ {Object.keys(errors).length} artist{Object.keys(errors).length>1?"s":""} failed to load — open the binder to see which, and retry.
+          </div>
+        )}
+        <div style={{marginTop:"1.5rem",marginBottom:"1.5rem",background:"radial-gradient(ellipse at 25% 50%,rgba(220,72,64,0.1) 0%,transparent 65%)",border:"1px solid #1e1e35",borderRadius:20,padding:"2rem 1.5rem",display:"flex",flexWrap:"wrap",alignItems:"center",gap:"2rem"}}>
+          <div style={{display:"flex",justifyContent:"center",flexShrink:0}}><BlazLogo size={120} glow/></div>
+          <div style={{flex:1,minWidth:180}}>
+            <div style={{fontSize:".6rem",letterSpacing:".18em",color:"#5a2e10",marginBottom:".3rem",fontWeight:600}}>{user?.email||"YOUR COLLECTION"}</div>
+            <h2 className="font-display" style={{fontSize:"clamp(1.6rem,5vw,2.6rem)",fontWeight:700,letterSpacing:"-.02em",lineHeight:1,marginBottom:".4rem",backgroundImage:"linear-gradient(90deg,#fcd99d 0%,#f38e29 22%,#ea2515 45%,#c6578f 70%,#150353 100%)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",backgroundClip:"text",filter:"drop-shadow(0 0 22px rgba(234,37,21,0.35))"}}>YOUR BINDER</h2>
+            <p style={{fontSize:".7rem",color:"#5a2a10",fontStyle:"italic",marginBottom:"1.25rem",letterSpacing:".03em"}}>The art is the point.</p>
+            <div style={{display:"flex",flexWrap:"wrap",gap:"1.5rem",marginBottom:"1.25rem"}}>
+              <div>
+                <div style={{fontSize:"clamp(2rem,6vw,3.2rem)",fontWeight:900,color:"#FF8833",letterSpacing:"-.04em",lineHeight:1}}>{totalPct}<span style={{fontSize:".5em",opacity:.7}}>%</span></div>
+                <div style={{fontSize:".65rem",color:"#6b6b90",marginTop:2}}>Complete</div>
+              </div>
+              <div>
+                <div style={{fontSize:"clamp(2rem,6vw,3.2rem)",fontWeight:900,color:"#e8e8f4",letterSpacing:"-.04em",lineHeight:1}}>{totalOwned.toLocaleString()}</div>
+                <div style={{fontSize:".65rem",color:"#6b6b90",marginTop:2}}>Cards Owned</div>
+              </div>
+              {favorites.size>0&&(
+                <div>
+                  <div style={{fontSize:"clamp(2rem,6vw,3.2rem)",fontWeight:900,color:"#E8C030",letterSpacing:"-.04em",lineHeight:1}}>{mostWanted.length}</div>
+                  <div style={{fontSize:".65rem",color:"#6b6b90",marginTop:2}}>Still Wanted</div>
+                </div>
+              )}
+            </div>
+            <div style={{height:5,background:"#1e1e35",borderRadius:3,overflow:"hidden",maxWidth:300}}>
+              <div className="prog-fill" style={{width:`${totalPct}%`,height:"100%",borderRadius:3,background:"linear-gradient(90deg,#ff4400,#ff8800 50%,#c0589e 80%,#8b6cd8 100%)"}}/>
+            </div>
+          </div>
+        </div>
+
+        <section style={{marginBottom:"1.5rem"}}>
+          <h3 style={{fontSize:".62rem",letterSpacing:".14em",color:"#6b6b90",fontWeight:700,marginBottom:".75rem",paddingBottom:".5rem",borderBottom:"1px solid #1e1e35"}}>★ MOST WANTED</h3>
+          {favorites.size===0?(
+            <div style={{fontSize:".8rem",color:"#3a3a5a",padding:"1.25rem",textAlign:"center",border:"1px dashed #1e1e35",borderRadius:12,lineHeight:1.6}}>
+              Tap the <strong style={{color:"#E8C030"}}>★</strong> on any card to add it to your Most Wanted list.<br/>
+              <span style={{fontSize:".72rem",color:"#2a2a4a"}}>Your wishlist for the next card show.</span>
+            </div>
+          ):mostWanted.length===0?(
+            <div style={{fontSize:".82rem",color:"#22c55e",padding:"1.25rem",textAlign:"center",border:"1px solid rgba(34,197,94,0.2)",borderRadius:12}}>🎉 You own every card on your Most Wanted list.</div>
+          ):(
+            <div style={{display:"flex",flexDirection:"column",gap:"2px"}}>
+              {visibleWanted.map(({card,artist},i)=>{
+                const ebayQ=encodeURIComponent(`${card.name} ${card.localId||""} ${(card.set?.name||"").replace(/&/g,"and")} pokemon card near mint`);
+                const ebayUrl=`https://www.ebay.com/sch/i.html?_nkw=${ebayQ}&LH_Complete=1&LH_Sold=1`;
+                const price=getBestPrice(card);
+                const sm=imgSmall(card);
+                return(
+                  <div key={card.id} className="wanted-row" onClick={()=>onCardClick&&onCardClick(card)} style={{display:"flex",alignItems:"center",gap:".75rem",padding:".6rem .75rem",cursor:"pointer"}}>
+                    <div style={{fontSize:".7rem",color:"#3a3a5a",fontWeight:700,flexShrink:0,width:18}}>{i+1}</div>
+                    {sm&&<img src={sm} alt={card.name} style={{width:38,height:"auto",borderRadius:4,filter:"grayscale(0.15)",flexShrink:0}}/>}
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:".85rem",color:"#e8e8f4",fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{card.name}</div>
+                      <div style={{fontSize:".67rem",color:"#6b6b90"}}>{artist.name} · {card.set?.name}</div>
+                    </div>
+                    {price&&<div style={{fontWeight:700,color:"#9b9bc0",fontSize:".82rem",flexShrink:0}}>{fmtPrice(price.amount)}</div>}
+                    <a href={ebayUrl} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()} style={{display:"flex",alignItems:"center",background:"#1a1810",color:"#c8a020",border:"1px solid #3a3010",borderRadius:6,padding:"3px 8px",textDecoration:"none",fontSize:".68rem",fontWeight:600,flexShrink:0,whiteSpace:"nowrap"}}>eBay →</a>
+                  </div>
+                );
+              })}
+              {mostWanted.length>3&&(
+                <button onClick={()=>setShowAllWanted(v=>!v)} style={{marginTop:"4px",width:"100%",background:"none",border:"1px dashed #1e1e35",borderRadius:8,padding:".55rem",cursor:"pointer",color:"#4a4a70",fontSize:".72rem",fontWeight:600,letterSpacing:".06em",transition:"color .15s,border-color .15s"}} onMouseEnter={e=>{e.currentTarget.style.color="#9b7ce8";e.currentTarget.style.borderColor="#9b7ce8";}} onMouseLeave={e=>{e.currentTarget.style.color="#4a4a70";e.currentTarget.style.borderColor="#1e1e35";}}>
+                  {showAllWanted?`▲ SHOW LESS`:`▼ SEE ${mostWanted.length-3} MORE`}
+                </button>
+              )}
+            </div>
+          )}
+        </section>
+
+        <section style={{marginBottom:"1.5rem"}}>
+          <h3 style={{fontSize:".62rem",letterSpacing:".14em",color:"#6b6b90",fontWeight:700,marginBottom:".75rem",paddingBottom:".5rem",borderBottom:"1px solid #1e1e35"}}>MAIN ARTISTS</h3>
+          <div style={{display:"flex",flexDirection:"column",gap:"2px"}}>
+            {mainStats.map(entry=>(
+              <div key={entry.name} className="artist-row" onClick={()=>onGoBinder("artist:"+toSlug(entry.name))} style={{display:"flex",alignItems:"center",gap:".75rem",padding:".6rem .75rem"}}>
+                <div style={{width:145,flexShrink:0}}><span style={{fontSize:".875rem",fontWeight:600,color:entry.pct===100?"#22c55e":"#e8e8f4"}}>{entry.name}{entry.pct===100?" ✓":""}</span></div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{height:4,background:"#1e1e35",borderRadius:2,overflow:"hidden"}}><div className="prog-fill" style={{width:`${entry.pct}%`,height:"100%",borderRadius:2,background:entry.pct===100?"#22c55e":"linear-gradient(90deg,#7b5cc8,#9b7ce8)"}}/></div>
+                </div>
+                <div style={{fontSize:".72rem",color:"#6b6b90",fontVariantNumeric:"tabular-nums",flexShrink:0,minWidth:65,textAlign:"right"}}>{entry.owned}/{entry.total} <span style={{color:entry.pct===100?"#22c55e":entry.pct>50?"#8b6cd8":"#4a4a70"}}>{entry.pct}%</span></div>
+                <div style={{fontSize:".65rem",color:"#2a2a40",flexShrink:0}}>→</div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {secStats.length>0&&(
+          <section style={{marginBottom:"1.5rem"}}>
+            <h3 style={{fontSize:".62rem",letterSpacing:".14em",color:"#6b6b90",fontWeight:700,marginBottom:".75rem",paddingBottom:".5rem",borderBottom:"1px solid #1e1e35"}}>SECONDARY & SPECIAL</h3>
+            <div style={{display:"flex",flexDirection:"column",gap:"2px"}}>
+              {secStats.map(entry=>(
+                <div key={entry.name} className="artist-row" onClick={()=>onGoBinder("artist:"+toSlug(entry.name))} style={{display:"flex",alignItems:"center",gap:".75rem",padding:".5rem .75rem"}}>
+                  <div style={{width:145,flexShrink:0}}><span style={{fontSize:".8rem",color:entry.pct===100?"#22c55e":"#8888a8"}}>{entry.name}{entry.pct===100?" ✓":""}</span></div>
+                  <div style={{flex:1,minWidth:0}}><div style={{height:3,background:"#1e1e35",borderRadius:2,overflow:"hidden"}}><div className="prog-fill" style={{width:`${entry.pct}%`,height:"100%",borderRadius:2,background:entry.pct===100?"#22c55e":"#4a3880"}}/></div></div>
+                  <div style={{fontSize:".68rem",color:"#3a3a60",fontVariantNumeric:"tabular-nums",flexShrink:0,minWidth:50,textAlign:"right"}}>{entry.owned}/{entry.total}</div>
+                  <div style={{fontSize:".65rem",color:"#1e1e30",flexShrink:0}}>→</div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        <div style={{textAlign:"center",padding:"1.5rem 0 3rem"}}>
+          <button onClick={()=>onGoBinder("binder")} className="btn-flame" style={{borderRadius:50,padding:".85rem 2.5rem",fontSize:".95rem",fontWeight:800,letterSpacing:".08em",boxShadow:"0 0 30px rgba(255,60,0,0.35)"}}>OPEN FULL BINDER →</button>
+          <div style={{marginTop:"2rem",fontSize:".6rem",letterSpacing:".14em",color:"#2a1408"}}>Komiya · Morii · Kanda · Nishida</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── CARD TILE ──────────────────────────────────────────────────────────────────
+const CardTile=React.memo(function CardTile({card,owned,manualOwned,manualMissing,isFavorite,onCardClick,onToggleFavorite,readOnly}){
+  const badge=owned?{color:"#22c55e",label:"✓"}:null;
+  const sm=imgSmall(card);
+  const[fallback,setFallback]=useState(undefined); // undefined=not tried yet, false=tried & missing, {small,large}=found
+  const[limitlessFailed,setLimitlessFailed]=useState(false);
+  useEffect(()=>{
+    if(sm||fallback!==undefined)return;
+    let cancelled=false;
+    fetchFallbackImage(card.id).then(r=>{if(!cancelled)setFallback(r);});
+    return()=>{cancelled=true;};
+  },[sm,card.id]);
+  const limitlessGuess=fallback===false?buildLimitlessGuess(card):null;
+  const displaySrc=sm||(fallback&&fallback.small)||(limitlessGuess&&!limitlessFailed?limitlessGuess.small:null);
+  const isUnverified=!sm&&!(fallback&&fallback.small)&&!!displaySrc;
+  return(
+    <div className={`card-tile ${owned?"owned":"missing"}`}>
+      <div onClick={()=>onCardClick(card)} style={{display:"block"}}>
+        {displaySrc?<img src={displaySrc} alt={card.name} loading="lazy" decoding="async" onError={isUnverified?()=>setLimitlessFailed(true):undefined}/>:<div className="card-blank"><div className="blank-inner">{fallback===undefined?<IcoSpin/>:<IcoNoImage/>}<span>{card.name}</span></div></div>}
+      </div>
+      {badge&&<div style={{position:"absolute",top:3,right:3,background:badge.color,borderRadius:"50%",width:14,height:14,display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,color:"white",fontWeight:700,pointerEvents:"none"}}>{badge.label}</div>}
+      {!readOnly&&<button className={`fav-btn ${isFavorite?"on":"off"}`} onClick={e=>{e.stopPropagation();onToggleFavorite(card.id);}}>★</button>}
+    </div>
+  );
+});
+
+// ── PRICE CHART ────────────────────────────────────────────────────────────────
+function PriceChart({history}){
+  const hist=(history||[]).slice(-90);
+  if(hist.length<2)return<div style={{textAlign:"center",color:"#6b6b90",fontSize:".75rem",padding:"1.25rem 0",lineHeight:1.6}}>Price history builds over time as you open cards.<br/>{hist.length===1?"1 point recorded.":"No history yet."}</div>;
+  const prices=hist.map(h=>h.price),dates=hist.map(h=>h.date.slice(5));
+  const minP=Math.min(...prices),maxP=Math.max(...prices),range=maxP-minP||1;
+  const W=340,H=80,PX=8,PY=12,W2=W-2*PX,H2=H-2*PY;
+  const pts=prices.map((p,i)=>[PX+(prices.length>1?(i/(prices.length-1))*W2:W2/2),PY+H2-((p-minP)/range)*H2]);
+  const poly=pts.map(pt=>pt[0]+","+pt[1]).join(" ");
+  const last=pts[pts.length-1],first=pts[0];
+  const areaD=["M "+first[0]+","+(H-PY),...pts.map(pt=>"L "+pt[0]+","+pt[1]),"L "+last[0]+","+(H-PY),"Z"].join(" ");
+  const gid="g"+(hist[0]?.date||"x").replace(/\D/g,"");
+  return(
+    <svg viewBox={"0 0 "+W+" "+H} style={{width:"100%",height:"auto",display:"block"}}>
+      <defs><linearGradient id={gid} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#8b6cd8" stopOpacity="0.25"/><stop offset="100%" stopColor="#8b6cd8" stopOpacity="0.02"/></linearGradient></defs>
+      <line x1={PX} y1={PY} x2={W-PX} y2={PY} stroke="#1e1e35" strokeWidth="1"/>
+      <line x1={PX} y1={PY+H2/2} x2={W-PX} y2={PY+H2/2} stroke="#1e1e35" strokeWidth="1"/>
+      <line x1={PX} y1={H-PY} x2={W-PX} y2={H-PY} stroke="#1e1e35" strokeWidth="1"/>
+      <path d={areaD} fill={"url(#"+gid+")"}/>
+      <polyline points={poly} fill="none" stroke="#8b6cd8" strokeWidth="2" strokeLinejoin="round"/>
+      <circle cx={last[0]} cy={last[1]} r="3" fill="#8b6cd8"/>
+      <text x={W-PX} y={PY-2} textAnchor="end" fontSize="8" fill="#6b6b90">{fmtPrice(maxP)}</text>
+      <text x={W-PX} y={H-1} textAnchor="end" fontSize="8" fill="#6b6b90">{fmtPrice(minP)}</text>
+      <text x={PX} y={H-1} fontSize="8" fill="#6b6b90">{dates[0]}</text>
+      <text x={W/2} y={H-1} textAnchor="middle" fontSize="8" fill="#6b6b90">{dates[Math.floor(dates.length/2)]}</text>
+    </svg>
+  );
+}
+
+// ── CARD MODAL ─────────────────────────────────────────────────────────────────
+function CardModal({card,owned,manualOwned,manualMissing,isFavorite,priceHistory,onToggleManual,onToggleFavorite,onRecordPrice,onClose,readOnly}){
+  const price=getBestPrice(card);
+  const allVariants=card&&card.pricing&&card.pricing.tcgplayer?card.pricing.tcgplayer:{};
+  const cmPrices=card&&card.pricing&&card.pricing.cardmarket&&card.pricing.cardmarket.prices?card.pricing.cardmarket.prices:null;
+  const cmTrend=cmPrices?(cmPrices.trendPrice??cmPrices.averageSellPrice??null):null;
+  const cmUrl=card&&card.pricing&&card.pricing.cardmarket?card.pricing.cardmarket.url:null;
+  const isManualOwned  =manualOwned.has(card.id);
+  const isManualMissing=manualMissing.has(card.id);
+  const cardHistory=priceHistory[card.id]||[];
+  const overrideStatus=isManualOwned?"manual-owned":isManualMissing?"manual-missing":"auto";
+  const ebayQ=encodeURIComponent(`${card.name} ${card.localId||""} ${(card.set?.name||"").replace(/&/g,"and")} pokemon card near mint`);
+  const ebayUrl=`https://www.ebay.com/sch/i.html?_nkw=${ebayQ}&LH_Complete=1&LH_Sold=1`;
+  const tcgplayerUrl=`https://www.tcgplayer.com/search/pokemon/product?productLineName=pokemon&q=${encodeURIComponent(card.name+" "+(card.set?.name||""))}`;
+  const lg=imgLarge(card);
+  const[modalFallback,setModalFallback]=useState(undefined);
+  const[modalLimitlessFailed,setModalLimitlessFailed]=useState(false);
+  const[zoomed,setZoomed]=useState(false);
+  useEffect(()=>{
+    setModalFallback(undefined);
+    setModalLimitlessFailed(false);
+    if(lg)return;
+    let cancelled=false;
+    fetchFallbackImage(card.id).then(r=>{if(!cancelled)setModalFallback(r);});
+    return()=>{cancelled=true;};
+  },[lg,card.id]);
+  const modalLimitlessGuess=modalFallback===false?buildLimitlessGuess(card):null;
+  const displayLg=lg||(modalFallback&&(modalFallback.large||modalFallback.small))||(modalLimitlessGuess&&!modalLimitlessFailed?modalLimitlessGuess.large:null);
+  const sourceTier=lg?"tcgdex":((modalFallback&&(modalFallback.large||modalFallback.small))?"ptcgio":(displayLg?"limitless":null));
+
+  useEffect(()=>{if(readOnly||!card||!price)return;const td=todayStr();if(!cardHistory.find(h=>h.date===td))onRecordPrice(card.id,price.amount,td);},[card&&card.id]);
+  useEffect(()=>{const fn=e=>{if(e.key==="Escape")onClose();};window.addEventListener("keydown",fn);return()=>window.removeEventListener("keydown",fn);},[onClose]);
+  useEffect(()=>{document.body.style.overflow="hidden";return()=>{document.body.style.overflow="";};},[]);
+  if(!card)return null;
+
+  const variantEntries=Object.entries(allVariants).filter(([k,v])=>k!=="updated"&&k!=="unit"&&v&&v.marketPrice!=null);
+
+  return(<>
+    <div className="modal-bg" onClick={onClose} style={{position:"fixed",inset:0,zIndex:200,background:"rgba(7,7,15,0.88)",display:"flex",alignItems:"center",justifyContent:"center",padding:"1rem"}}>
+      <div className="fade-up" onClick={e=>e.stopPropagation()} style={{background:"#141425",border:"1px solid #1e1e35",borderRadius:16,maxWidth:460,width:"100%",maxHeight:"90dvh",overflowY:"auto",padding:"1.25rem"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"1rem"}}>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{display:"flex",alignItems:"center",gap:".5rem"}}>
+              <h2 style={{fontWeight:700,fontSize:"1.05rem",color:"#e8e8f4"}}>{card.name}</h2>
+              {!readOnly&&<button onClick={()=>onToggleFavorite(card.id)} style={{background:isFavorite?"rgba(255,200,30,0.15)":"rgba(255,255,255,0.05)",border:`1px solid ${isFavorite?"rgba(255,200,30,0.4)":"#1e1e35"}`,borderRadius:6,padding:"2px 7px",cursor:"pointer",fontSize:".75rem",color:isFavorite?"#E8C030":"#4a4a70",flexShrink:0}}>{isFavorite?"★ Wanted":"☆ Want"}</button>}
+            </div>
+            <div style={{fontSize:".7rem",color:"#6b6b90",marginTop:2}}>{card.set&&card.set.name} · #{card.localId} · {card.rarity}</div>
+          </div>
+          <button onClick={onClose} style={{background:"none",border:"none",color:"#6b6b90",cursor:"pointer",padding:4,display:"flex",flexShrink:0}}><IcoX/></button>
+        </div>
+
+        <div style={{display:"flex",gap:"1rem",marginBottom:"1.25rem"}}>
+          <div style={{flexShrink:0,width:128}}>
+            {displayLg?<img src={displayLg} alt={card.name} onClick={()=>setZoomed(true)} style={{width:"100%",borderRadius:8,cursor:"zoom-in"}} onError={sourceTier==="limitless"?()=>setModalLimitlessFailed(true):undefined}/>:<div className="card-blank" style={{borderRadius:8}}><div className="blank-inner">{!lg&&modalFallback===undefined?<IcoSpin size={26}/>:<IcoNoImage size={26}/>}<span style={{fontSize:".68rem"}}>{!lg&&modalFallback===undefined?"Checking for an image…":<>No image available<br/>for this card</>}</span></div></div>}
+            {sourceTier==="ptcgio"&&<div style={{fontSize:".6rem",color:"#4a4a70",marginTop:4,textAlign:"center"}}>Image via Pokémon TCG API archive (TCGdex has none for this card)</div>}
+            {sourceTier==="limitless"&&<div style={{fontSize:".6rem",color:"#4a4a70",marginTop:4,textAlign:"center"}}>Image via Limitless TCG — unverified match, TCGdex has none for this card</div>}
+          </div>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{marginBottom:".75rem"}}>
+              <span style={{display:"inline-flex",alignItems:"center",gap:4,padding:"2px 8px",borderRadius:4,fontSize:".7rem",fontWeight:600,background:owned?"rgba(34,197,94,0.12)":"rgba(107,107,144,0.15)",color:owned?"#22c55e":"#6b6b90"}}>
+                {owned?<span style={{display:"flex",alignItems:"center",gap:3}}><IcoCheck/> In Collection</span>:"Missing"}
+              </span>
+              {isManualOwned  &&<span style={{marginLeft:6,fontSize:".65rem",color:"#60a5fa",background:"rgba(96,165,250,0.12)",padding:"1px 6px",borderRadius:4}}>✏ Manual</span>}
+              {isManualMissing&&<span style={{marginLeft:6,fontSize:".65rem",color:"#f87171",background:"rgba(248,113,113,0.12)",padding:"1px 6px",borderRadius:4}}>✏ Override</span>}
+            </div>
+            <div style={{fontSize:".68rem",color:"#6b6b90"}}>Artist</div>
+            <div style={{fontSize:".85rem",color:"#e8e8f4",marginBottom:".75rem",fontWeight:500}}>{card.illustrator}</div>
+            {price?(
+              <div>
+                <div style={{fontSize:".68rem",color:"#6b6b90"}}>TCGPlayer Market</div>
+                <div style={{fontSize:"1.5rem",fontWeight:800,color:"#8b6cd8",letterSpacing:"-.02em",lineHeight:1.1,marginBottom:".3rem"}}>{fmtPrice(price.amount)}</div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:".5rem",fontSize:".68rem"}}>
+                  {price.prices?.low !=null&&<span style={{color:"#6b6b90"}}>Low  <span style={{color:"#9b9bc0"}}>{fmtPrice(price.prices.low)}</span></span>}
+                  {price.prices?.mid !=null&&<span style={{color:"#6b6b90"}}>Mid  <span style={{color:"#9b9bc0"}}>{fmtPrice(price.prices.mid)}</span></span>}
+                  {price.prices?.high!=null&&<span style={{color:"#6b6b90"}}>High <span style={{color:"#9b9bc0"}}>{fmtPrice(price.prices.high)}</span></span>}
+                </div>
+              </div>
+            ):<div style={{fontSize:".78rem",color:"#6b6b90"}}>No pricing data</div>}
+            {cmTrend!=null&&(
+              <div style={{marginTop:".5rem",paddingTop:".5rem",borderTop:"1px solid #1e1e35"}}>
+                <div style={{fontSize:".68rem",color:"#6b6b90"}}>Cardmarket Trend</div>
+                <div style={{fontSize:"1.1rem",fontWeight:700,color:"#5b9dd8",letterSpacing:"-.01em"}}>€{cmTrend.toFixed(2)}</div>
+                {cmPrices.lowPrice!=null&&<div style={{fontSize:".68rem",color:"#6b6b90"}}>Low <span style={{color:"#9b9bc0"}}>€{cmPrices.lowPrice.toFixed(2)}</span></div>}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {!readOnly&&(
+          <div style={{marginBottom:"1rem",padding:".7rem",background:"#0f0f1c",borderRadius:10,border:"1px solid #1e1e35"}}>
+            <div style={{fontSize:".65rem",color:"#6b6b90",marginBottom:".45rem",display:"flex",alignItems:"center",gap:4}}><IcoEdit/> Manual Override</div>
+            <div style={{display:"flex",gap:".4rem"}}>
+              <button onClick={()=>onToggleManual(card.id,"owned")} style={{flex:1,background:isManualOwned?"rgba(96,165,250,0.15)":"#141425",color:isManualOwned?"#60a5fa":"#6b6b90",border:`1px solid ${isManualOwned?"#60a5fa":"#1e1e35"}`,borderRadius:7,padding:".38rem .5rem",cursor:"pointer",fontSize:".72rem",fontWeight:600}}>✓ Force Owned</button>
+              <button onClick={()=>onToggleManual(card.id,"missing")} style={{flex:1,background:isManualMissing?"rgba(248,113,113,0.15)":"#141425",color:isManualMissing?"#f87171":"#6b6b90",border:`1px solid ${isManualMissing?"#f87171":"#1e1e35"}`,borderRadius:7,padding:".38rem .5rem",cursor:"pointer",fontSize:".72rem",fontWeight:600}}>✕ Force Missing</button>
+              {overrideStatus!=="auto"&&<button onClick={()=>onToggleManual(card.id,"reset")} style={{background:"#141425",color:"#6b6b90",border:"1px solid #1e1e35",borderRadius:7,padding:".38rem .6rem",cursor:"pointer",fontSize:".72rem"}}>Reset</button>}
+            </div>
+          </div>
+        )}
+
+        {variantEntries.length>1&&(
+          <div style={{marginBottom:"1rem"}}>
+            <div style={{fontSize:".68rem",color:"#6b6b90",marginBottom:".4rem"}}>All Variants</div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:".4rem"}}>
+              {variantEntries.map(([k,v])=><div key={k} style={{background:"#0f0f1c",border:"1px solid #1e1e35",borderRadius:6,padding:"3px 8px",fontSize:".67rem"}}><span style={{color:"#6b6b90"}}>{k.replace(/-/g," ")}: </span><span style={{color:"#e8e8f4",fontWeight:600}}>{fmtPrice(v.marketPrice)}</span></div>)}
+            </div>
+          </div>
+        )}
+
+        <div style={{marginBottom:".75rem"}}>
+          <div style={{fontSize:".68rem",color:"#6b6b90",marginBottom:".4rem"}}>Price History</div>
+          <PriceChart history={cardHistory}/>
+        </div>
+
+        <div style={{display:"flex",gap:".5rem"}}>
+          <a href={tcgplayerUrl} target="_blank" rel="noopener noreferrer" style={{flex:1,display:"block",textAlign:"center",background:"#1a1430",color:"#9b7fe8",padding:".5rem",borderRadius:8,textDecoration:"none",fontSize:".75rem",border:"1px solid #2e2255",fontWeight:500}}>TCGPlayer →</a>
+          <a href={ebayUrl} target="_blank" rel="noopener noreferrer" style={{flex:1,display:"block",textAlign:"center",background:"#1a1810",color:"#c8a020",padding:".5rem",borderRadius:8,textDecoration:"none",fontSize:".75rem",border:"1px solid #3a3010",fontWeight:500}}>eBay Sold →</a>
+        </div>
+      </div>
+    </div>
+    {zoomed&&displayLg&&(
+      <div onClick={()=>setZoomed(false)} style={{position:"fixed",inset:0,zIndex:400,background:"rgba(0,0,0,0.95)",display:"flex",alignItems:"center",justifyContent:"center",padding:"1rem",cursor:"zoom-out"}}>
+        <img src={displayLg} alt={card.name} style={{maxWidth:"min(96vw,700px)",maxHeight:"92dvh",width:"auto",height:"auto",borderRadius:12,boxShadow:"0 0 60px rgba(139,108,216,0.25)"}} onClick={e=>e.stopPropagation()}/>
+        <button onClick={()=>setZoomed(false)} style={{position:"absolute",top:"1rem",right:"1rem",background:"rgba(255,255,255,0.1)",border:"none",color:"#fff",borderRadius:"50%",width:36,height:36,cursor:"pointer",fontSize:"1.1rem",display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+      </div>
+    )}
+  </>
+  );
+}
+
+
+// ── ARTIST PAGE ─────────────────────────────────────────────────────────────────
+// Dedicated full-screen page for a single illustrator.
+// Each artist gets a unique accent colour, quote, and hero layout.
+function ArtistPage({slug,entry,cards,checkOwned,manualOwned,manualMissing,favorites,onCardClick,onToggleFavorite,onBack}){
+  const meta=ARTIST_META[slug]||{};
+  const accent=meta.accent||"#8b6cd8";
+  const grad=meta.grad||"rgba(139,108,216,0.12)";
+  const fact=entry?ARTIST_FACTS[entry.name]:null;
+  const[search,setSearch]=useState("");
+  const[sortBy,setSortBy]=useState("date-asc");
+  const[viewMode,setViewMode]=useState(null);
+  const owned=useMemo(()=>cards.filter(checkOwned).length,[cards,checkOwned]);
+  const total=cards.length;
+  const pct=total?Math.round((owned/total)*100):0;
+
+  // One pick per named Pokémon in topCardNames — prefer cards with images
+  const topCards=useMemo(()=>{
+    if(!meta.topCardNames||!meta.topCardNames.length)return[];
+    const result=[];const seen=new Set();
+    meta.topCardNames.forEach(name=>{
+      const norm=name.toLowerCase();
+      if(seen.has(norm))return;
+      const matches=cards.filter(c=>(c.name||"").toLowerCase().startsWith(norm));
+      if(matches.length){
+        const withImg=matches.filter(c=>imgSmall(c));
+        result.push(withImg.length?withImg[0]:matches[0]);
+        seen.add(norm);
+      }
+    });
+    return result;
+  },[cards,meta.topCardNames]);
+
+  // Hero uses top cards for the scattered backdrop if we have enough, else first few
+  const heroCards=useMemo(()=>(topCards.length>=2?topCards:cards.filter(c=>imgSmall(c))).filter(c=>imgSmall(c)).slice(0,3),[cards,topCards]);
+
+  const POSES=[
+    {r:"5%", t:"8%",  rot:"-7deg",w:132,op:1   },
+    {r:"36%",t:"30%", rot:"5deg", w:108,op:0.87},
+    {r:"10%",t:"54%", rot:"-3deg",w:90, op:0.72},
+  ];
+  const displayName=entry?.name||slug;
+  const selSt={background:"#0f0f1c",border:"1px solid #1e1e35",borderRadius:7,color:"#e8e8f4",padding:".35rem .55rem",fontSize:".74rem"};
+
+  return(
+    <div style={{minHeight:"100dvh",background:"#07070f"}}>
+
+      {/* ── sticky mini-header ── */}
+      <div style={{position:"sticky",top:0,zIndex:100,background:"rgba(7,7,15,0.96)",backdropFilter:"blur(18px)",WebkitBackdropFilter:"blur(18px)",borderBottom:"1px solid #1e1e35",display:"flex",alignItems:"center",gap:".6rem",padding:".6rem 1rem"}}>
+        <button onClick={onBack} style={{background:"none",border:"none",color:"#6b6b90",cursor:"pointer",display:"flex",alignItems:"center",gap:".25rem",fontSize:".76rem",padding:"3px 5px",borderRadius:5,transition:"color .12s"}} onMouseEnter={e=>e.currentTarget.style.color="#e8e8f4"} onMouseLeave={e=>e.currentTarget.style.color="#6b6b90"}>
+          ← Dashboard
+        </button>
+        <div style={{width:1,height:14,background:"#1e1e35",flexShrink:0}}/>
+        <span style={{fontSize:".78rem",fontWeight:700,color:accent,letterSpacing:".02em",flex:1,minWidth:0,overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{displayName}</span>
+        <span style={{fontSize:".68rem",color:"#3a3a5a",whiteSpace:"nowrap"}}>{owned}/{total}</span>
+      </div>
+
+      {/* ── hero ── */}
+      <div style={{position:"relative",overflow:"hidden",minHeight:268,background:`radial-gradient(ellipse at 18% 65%, ${grad.replace(/[\d.]+\)$/,"0.22)")} 0%, transparent 68%)`,padding:"2rem 1.25rem 1.75rem"}}>
+        <div style={{position:"absolute",inset:0,zIndex:1,background:"linear-gradient(to right, #07070f 36%, rgba(7,7,15,0.75) 56%, transparent 100%)"}}/>
+        {heroCards.map((card,i)=>{
+          const p=POSES[i];
+          return(<img key={card.id} src={imgSmall(card)} alt={card.name} style={{position:"absolute",zIndex:0,right:p.r,top:p.t,width:p.w,height:"auto",borderRadius:9,transform:`rotate(${p.rot})`,opacity:p.op,boxShadow:`0 14px 44px rgba(0,0,0,0.72), 0 0 28px ${accent}28`,filter:"brightness(0.88)"}}/>);
+        })}
+        <div style={{position:"relative",zIndex:2,maxWidth:"63%",minWidth:170}}>
+          {meta.tags&&<div style={{fontSize:".58rem",letterSpacing:".16em",color:accent,fontWeight:800,marginBottom:".55rem",opacity:.85,lineHeight:1.6}}>{meta.tags}</div>}
+          <h1 className="font-display" style={{fontSize:"clamp(1.55rem,6.5vw,2.7rem)",fontWeight:900,color:"#f0f0ff",letterSpacing:"-.03em",lineHeight:1.05,marginBottom:".5rem"}}>{displayName}</h1>
+          {fact?.since&&<div style={{fontSize:".62rem",color:"rgba(190,190,210,0.38)",marginBottom:".75rem",letterSpacing:".04em"}}>{fact.since}</div>}
+          {meta.quote&&(
+            <div style={{fontStyle:"italic",fontSize:".87rem",color:"rgba(228,224,248,0.62)",lineHeight:1.58,maxWidth:258,marginBottom:"1.2rem",borderLeft:`2px solid ${accent}`,paddingLeft:".65rem"}}>
+              "{meta.quote}"
+            </div>
+          )}
+          <div style={{display:"flex",alignItems:"center",gap:".7rem"}}>
+            <div style={{flex:1,maxWidth:156}}>
+              <div style={{height:3,background:"rgba(255,255,255,0.07)",borderRadius:2,overflow:"hidden"}}>
+                <div style={{width:`${pct}%`,height:"100%",borderRadius:2,background:pct===100?"#22c55e":accent,transition:"width 1.2s cubic-bezier(.16,1,.3,1)"}}/>
+              </div>
+            </div>
+            <span style={{fontSize:".75rem",fontWeight:700,color:pct===100?"#22c55e":accent}}>{pct===100?"Complete ✓":`${pct}%`}</span>
+            <span style={{fontSize:".66rem",color:"rgba(190,190,210,0.32)"}}>{owned}/{total}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* ── about ── */}
+      {(fact?.story||fact?.fact)&&(
+        <div style={{padding:"1.1rem 1.25rem 1rem",background:`linear-gradient(135deg,${grad.replace(/[\d.]+\)$/,"0.07)")} 0%,transparent 100%)`,borderBottom:"1px solid #1e1e35"}}>
+          <p style={{margin:0,fontSize:".82rem",lineHeight:1.72,color:"rgba(200,192,218,0.85)"}}>{fact.story||fact.fact}</p>
+        </div>
+      )}
+
+      {/* ── notable cards ── */}
+      {topCards.length>0&&(
+        <div style={{borderBottom:"1px solid #1e1e35",paddingBottom:".75rem"}}>
+          <div style={{display:"flex",alignItems:"baseline",gap:".5rem",padding:".85rem 1.25rem .55rem"}}>
+            <span style={{fontSize:".6rem",letterSpacing:".14em",fontWeight:800,color:accent}}>NOTABLE CARDS</span>
+            <span style={{fontSize:".6rem",color:"#2a2a40"}}>Tap to inspect · owned cards glow</span>
+          </div>
+          <div style={{display:"flex",gap:"10px",overflowX:"auto",padding:"0 1.25rem",scrollbarWidth:"none",WebkitOverflowScrolling:"touch"}}>
+            {topCards.map(card=>{
+              const isOwned=checkOwned(card);
+              const sm=imgSmall(card);
+              return(
+                <div key={card.id} onClick={()=>onCardClick(card)} style={{flexShrink:0,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:5,width:90,paddingBottom:4}}>
+                  <div style={{borderRadius:9,overflow:"hidden",boxShadow:isOwned?`0 0 0 2px ${accent}, 0 6px 22px rgba(0,0,0,0.55)`:"0 4px 14px rgba(0,0,0,0.45)",transition:"transform .15s,box-shadow .15s"}} onMouseEnter={e=>{e.currentTarget.style.transform="scale(1.05)";e.currentTarget.style.boxShadow=isOwned?`0 0 0 2px ${accent}, 0 10px 30px rgba(0,0,0,0.7)`:"0 8px 24px rgba(0,0,0,0.65)";}} onMouseLeave={e=>{e.currentTarget.style.transform="scale(1)";e.currentTarget.style.boxShadow=isOwned?`0 0 0 2px ${accent}, 0 6px 22px rgba(0,0,0,0.55)`:"0 4px 14px rgba(0,0,0,0.45)";}}>
+                    {sm&&<img src={sm} alt={card.name} style={{display:"block",width:90,height:"auto",filter:isOwned?"brightness(1.05)":"grayscale(0.2) brightness(0.85)"}}/>}
+                  </div>
+                  <span style={{fontSize:".58rem",color:isOwned?accent:"#4a4a70",fontWeight:isOwned?700:500,textAlign:"center",lineHeight:1.2,width:"100%",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{isOwned?"✓ ":""}{card.name}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ── controls ── */}
+      <div style={{position:"sticky",top:49,zIndex:90,background:"rgba(7,7,15,0.96)",backdropFilter:"blur(12px)",WebkitBackdropFilter:"blur(12px)",borderBottom:"1px solid #1e1e35",display:"flex",gap:".35rem",alignItems:"center",padding:".45rem .75rem",flexWrap:"wrap"}}>
+        <div style={{flex:"1 1 110px",position:"relative",minWidth:0}}>
+          <span style={{position:"absolute",left:".55rem",top:"50%",transform:"translateY(-50%)",color:"#6b6b90",fontSize:".7rem",pointerEvents:"none"}}>⌕</span>
+          <input type="search" placeholder="Search…" value={search} onChange={e=>setSearch(e.target.value)} style={{...selSt,width:"100%",paddingLeft:"1.6rem"}}/>
+        </div>
+        <button onClick={()=>setViewMode(viewMode==="missing"?null:"missing")} style={{...selSt,background:viewMode==="missing"?"rgba(139,108,216,0.18)":"#0f0f1c",color:viewMode==="missing"?"#c0a0f8":"#6b6b90",border:`1px solid ${viewMode==="missing"?"#8b6cd8":"#1e1e35"}`,cursor:"pointer",fontWeight:viewMode==="missing"?700:500,whiteSpace:"nowrap"}}>Missing</button>
+        <button onClick={()=>setViewMode(viewMode==="owned"?null:"owned")} style={{...selSt,background:viewMode==="owned"?"rgba(34,197,94,0.12)":"#0f0f1c",color:viewMode==="owned"?"#6ee7b7":"#6b6b90",border:`1px solid ${viewMode==="owned"?"#22c55e":"#1e1e35"}`,cursor:"pointer",fontWeight:viewMode==="owned"?700:500,whiteSpace:"nowrap"}}>Owned</button>
+        <select value={sortBy} onChange={e=>setSortBy(e.target.value)} style={{...selSt,maxWidth:72}}>
+          <option value="name">A–Z</option>
+          <option value="price-desc">$↓</option>
+          <option value="price-asc">$↑</option>
+          <option value="date-desc">New</option>
+          <option value="date-asc">Old</option>
+        </select>
+      </div>
+
+      {/* ── full card grid ── */}
+      <div style={{maxWidth:860,margin:"0 auto",padding:"1rem"}}>
+        <ArtistSection entry={entry} cards={cards} checkOwned={checkOwned} manualOwned={manualOwned} manualMissing={manualMissing} favorites={favorites} onCardClick={onCardClick} onToggleFavorite={onToggleFavorite} searchQuery={search} sortBy={sortBy} viewMode={viewMode} noHeader/>
+      </div>
+
+    </div>
+  );
+}
+
+
+// ── ARTIST SECTION ─────────────────────────────────────────────────────────────
+function ArtistSection({entry,cards,checkOwned,manualOwned,manualMissing,favorites,onCardClick,onToggleFavorite,searchQuery,sortBy,viewMode,readOnly,noHeader}){
+  const isSecondary=entry.tier==="secondary";
+  const[open,setOpen]=useState(noHeader||!isSecondary);
+  const[showFact,setShowFact]=useState(false);
+  const fact=ARTIST_FACTS[entry.name];
+  const displayCards=useMemo(()=>{let arr=cards;if(searchQuery){const q=searchQuery.toLowerCase();arr=arr.filter(c=>(c.name||"").toLowerCase().includes(q));}return sortCards(arr,sortBy,checkOwned);},[cards,searchQuery,sortBy,checkOwned]);
+  const groupedBySet=useMemo(()=>{if(!viewMode)return null;const filtered=searchQuery?cards.filter(c=>(c.name||"").toLowerCase().includes(searchQuery.toLowerCase())):cards;const missingCards=filtered.filter(c=>!checkOwned(c));const ownedCards=filtered.filter(c=>checkOwned(c));const bySet=list=>{const groups=new Map();list.forEach(card=>{const sid=(card.set&&card.set.id)||"unknown",sname=(card.set&&card.set.name)||"Unknown Set";if(!groups.has(sid))groups.set(sid,{id:sid,name:sname,cards:[]});groups.get(sid).cards.push(card);});groups.forEach(g=>{if(sortBy==="price-desc"){g.cards.sort((a,b)=>{const pa=getBestPrice(a),pb=getBestPrice(b);if(!pa&&!pb)return(a.name||"").localeCompare(b.name||"");if(!pa)return 1;if(!pb)return-1;return pb.amount-pa.amount;});}else if(sortBy==="price-asc"){g.cards.sort((a,b)=>{const pa=getBestPrice(a),pb=getBestPrice(b);if(!pa&&!pb)return(a.name||"").localeCompare(b.name||"");if(!pa)return 1;if(!pb)return-1;return pa.amount-pb.amount;});}else{g.cards.sort((a,b)=>(a.name||"").localeCompare(b.name||""));}});return Array.from(groups.values()).sort((a,b)=>{const oa=SET_ORDER[a.id]??999,ob=SET_ORDER[b.id]??999;if(sortBy==="date-desc")return oa===ob?(a.name||"").localeCompare(b.name||""):ob-oa;return oa===ob?(a.name||"").localeCompare(b.name||""):oa-ob;});};return{missing:bySet(missingCards),owned:bySet(ownedCards),missingCount:missingCards.length,ownedCount:ownedCards.length};},[cards,searchQuery,sortBy,viewMode,checkOwned]);
+  const ownedCount=useMemo(()=>cards.filter(checkOwned).length,[cards,checkOwned]);
+  const pct=cards.length?Math.round((ownedCount/cards.length)*100):0;
+  const complete=pct===100&&cards.length>0;
+  useEffect(()=>{if(searchQuery&&displayCards.length>0)setOpen(true);},[searchQuery,displayCards.length]);
+  if(searchQuery&&displayCards.length===0)return null;
+  return(
+    <div style={{marginBottom:"2rem"}}>
+      {!noHeader&&<div onClick={()=>setOpen(o=>!o)} style={{display:"flex",alignItems:"center",gap:".6rem",paddingBottom:".6rem",marginBottom:".75rem",borderBottom:"1px solid #1e1e35",cursor:"pointer",userSelect:"none"}}>
+        <IcoChev open={open}/>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{display:"flex",alignItems:"baseline",flexWrap:"wrap",gap:".4rem"}}>
+            <span style={{fontSize:isSecondary?".9rem":"1.05rem",fontWeight:700,letterSpacing:"-.01em",color:complete?"#22c55e":"#e8e8f4"}}>{entry.tier==="special"?"🎮 ":""}{entry.name}{complete?" ✓":""}</span>
+            {fact&&<button className={`info-btn ${showFact?"active":""}`} onClick={e=>{e.stopPropagation();setShowFact(s=>!s);}} aria-label="About this artist"><IcoInfo/></button>}
+            <span style={{fontSize:".73rem",color:"#6b6b90",fontVariantNumeric:"tabular-nums"}}>{ownedCount} / {cards.length}</span>
+            {isSecondary&&<span style={{fontSize:".6rem",color:"#3a3a5a",background:"#141425",border:"1px solid #1e1e35",padding:"0px 5px",borderRadius:3}}>secondary</span>}
+          </div>
+          <div style={{marginTop:".3rem",height:2,background:"#1e1e35",borderRadius:1,maxWidth:180,overflow:"hidden"}}><div className="prog-fill" style={{width:`${pct}%`,height:"100%",borderRadius:1,background:complete?"#22c55e":"#8b6cd8"}}/></div>
+        </div>
+      </div>}
+      {!noHeader&&fact&&showFact&&(
+        <div className="fact-panel" onClick={e=>e.stopPropagation()} style={{marginTop:"-.4rem",marginBottom:"1rem",padding:".7rem .85rem",background:"rgba(192,88,158,0.06)",border:"1px solid rgba(192,88,158,0.22)",borderRadius:10,fontSize:".78rem",lineHeight:1.5,color:"#c9b8d8"}}>
+          <div style={{fontSize:".64rem",letterSpacing:".06em",color:"#9a7ab0",fontWeight:700,marginBottom:".25rem",textTransform:"uppercase"}}>{fact.since}</div>
+          {fact.fact}
+        </div>
+      )}
+      {(open||noHeader)&&(
+        groupedBySet?(
+          <>{(viewMode==="missing"?[{key:"miss",label:"MISSING",count:groupedBySet.missingCount,groups:groupedBySet.missing,ownedFlag:false,hdr:"#9b7ce8",hdrLine:"rgba(139,108,216,0.18)",grpClr:"#4a4a70",divBg:"#0d0d1a"},{key:"own",label:"OWNED",count:groupedBySet.ownedCount,groups:groupedBySet.owned,ownedFlag:true,hdr:"#3a7a4a",hdrLine:"rgba(34,197,94,0.12)",grpClr:"#2a3a2a",divBg:"#09120a"}]:[{key:"own",label:"OWNED",count:groupedBySet.ownedCount,groups:groupedBySet.owned,ownedFlag:true,hdr:"#3a7a4a",hdrLine:"rgba(34,197,94,0.12)",grpClr:"#2a3a2a",divBg:"#09120a"},{key:"miss",label:"MISSING",count:groupedBySet.missingCount,groups:groupedBySet.missing,ownedFlag:false,hdr:"#9b7ce8",hdrLine:"rgba(139,108,216,0.18)",grpClr:"#4a4a70",divBg:"#0d0d1a"}]).filter(s=>s.count>0).map((s,si)=>(<div key={s.key} style={{marginBottom:si===0?"1.5rem":0}}><div style={{display:"flex",alignItems:"center",gap:".6rem",marginBottom:".75rem"}}><span style={{fontSize:".58rem",letterSpacing:".12em",fontWeight:800,color:s.hdr,whiteSpace:"nowrap"}}>{s.label} · {s.count}</span><div style={{flex:1,height:"1px",background:s.hdrLine}}/></div>{s.groups.map((group,gi)=>(<div key={group.name+gi} style={{marginBottom:".7rem"}}><div style={{display:"flex",alignItems:"center",gap:".5rem",marginBottom:".3rem"}}><span style={{fontSize:".58rem",color:s.grpClr,fontWeight:700,letterSpacing:".04em",whiteSpace:"nowrap"}}>{group.name}</span><div style={{flex:1,height:"1px",background:s.divBg}}/><span style={{fontSize:".55rem",color:s.grpClr,whiteSpace:"nowrap",flexShrink:0}}>{group.cards.length}</span></div><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(76px,1fr))",gap:"6px"}}>{group.cards.map(card=><CardTile key={card.id} card={card} owned={s.ownedFlag} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(card.id)} onCardClick={onCardClick} onToggleFavorite={onToggleFavorite} readOnly={readOnly}/>)}</div></div>))}</div>))}</>
+        ):(
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(76px,1fr))",gap:"6px"}}>
+            {displayCards.map(card=><CardTile key={card.id} card={card} owned={checkOwned(card)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(card.id)} onCardClick={onCardClick} onToggleFavorite={onToggleFavorite} readOnly={readOnly}/>)}
+          </div>
+        )
+      )}
+    </div>
+  );
+}
+
+// ── SETTINGS ───────────────────────────────────────────────────────────────────
+function ArtistPicker({selected,onToggle,onSelectAll,onSelectNone}){
+  const groups=[["Main Artists",ARTISTS.filter(a=>a.tier==="main")],["Secondary Artists",ARTISTS.filter(a=>a.tier==="secondary")]];
+  return(
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:".4rem"}}>
+        <span style={{fontSize:".64rem",color:"#4a4a70"}}>{selected.size} of {ARTISTS.length} selected</span>
+        <div style={{display:"flex",gap:".6rem"}}>
+          <button onClick={onSelectAll} style={{background:"none",border:"none",color:"#8b6cd8",fontSize:".66rem",cursor:"pointer",padding:0}}>Select all</button>
+          <button onClick={onSelectNone} style={{background:"none",border:"none",color:"#6b6b90",fontSize:".66rem",cursor:"pointer",padding:0}}>None</button>
+        </div>
+      </div>
+      <div style={{maxHeight:220,overflowY:"auto",background:"#0a0a14",border:"1px solid #1e1e35",borderRadius:8,padding:".3rem .2rem"}}>
+        {groups.map(([label,list])=>(
+          <div key={label}>
+            <div style={{fontSize:".6rem",color:"#3a3a5a",fontWeight:700,letterSpacing:".06em",textTransform:"uppercase",padding:".4rem .5rem .2rem"}}>{label}</div>
+            {list.map(a=>{
+              const slug=toSlug(a.name),checked=selected.has(slug);
+              return(
+                <label key={slug} onClick={()=>onToggle(slug)} style={{display:"flex",alignItems:"center",gap:".55rem",padding:".34rem .5rem",borderRadius:6,cursor:"pointer",fontSize:".78rem",color:checked?"#e8e8f4":"#7a7aa0"}}>
+                  <span style={{width:16,height:16,borderRadius:4,border:`1.5px solid ${checked?"#8b6cd8":"#2a2a45"}`,background:checked?"#8b6cd8":"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,transition:"background .12s,border-color .12s"}}>{checked&&<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}</span>
+                  {a.name}
+                </label>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ShareLinkPanel({user}){
+  const[link, setLink] =useState(undefined); // undefined=loading, null=none yet, {token,enabled,artist_slugs}=exists
+  const[copied,setCopied]=useState(false);
+  const[busy, setBusy] =useState(false);
+  const[selectedSlugs,setSelectedSlugs]=useState(new Set());
+  const[showPicker,setShowPicker]=useState(false);
+
+  useEffect(()=>{
+    if(!user)return;
+    supabase.from("share_links").select("token,enabled,artist_slugs").eq("user_id",user.id).maybeSingle().then(({data})=>{
+      setLink(data||null);
+      setSelectedSlugs(new Set(data&&data.artist_slugs&&data.artist_slugs.length?data.artist_slugs:[]));
+    });
+  },[user]);
+
+  const shareUrl=link&&link.token?`${window.location.origin}${window.location.pathname}?share=${link.token}`:null;
+  const savedSlugs=useMemo(()=>new Set(link&&link.artist_slugs||[]),[link]);
+  const slugsDirty=link&&(selectedSlugs.size!==savedSlugs.size||[...selectedSlugs].some(s=>!savedSlugs.has(s)));
+
+  const toggleSlug=slug=>setSelectedSlugs(s=>{const n=new Set(s);n.has(slug)?n.delete(slug):n.add(slug);return n;});
+  const selectAll=()=>setSelectedSlugs(new Set(ARTISTS.map(a=>toSlug(a.name))));
+  const selectNone=()=>setSelectedSlugs(new Set());
+
+  const create=async()=>{
+    if(selectedSlugs.size===0)return;
+    setBusy(true);
+    const token=(crypto.randomUUID?crypto.randomUUID():`${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`).replace(/-/g,"");
+    const{data}=await supabase.from("share_links").upsert({user_id:user.id,token,enabled:true,artist_slugs:[...selectedSlugs]},{onConflict:"user_id"}).select("token,enabled,artist_slugs").maybeSingle();
+    setLink(data||{token,enabled:true,artist_slugs:[...selectedSlugs]});
+    setShowPicker(false);
+    setBusy(false);
+  };
+  const saveArtists=async()=>{
+    if(selectedSlugs.size===0)return;
+    setBusy(true);
+    await supabase.from("share_links").update({artist_slugs:[...selectedSlugs]}).eq("user_id",user.id);
+    setLink(l=>({...l,artist_slugs:[...selectedSlugs]}));
+    setShowPicker(false);
+    setBusy(false);
+  };
+  const toggleEnabled=async()=>{
+    if(!link)return;
+    setBusy(true);
+    const next=!link.enabled;
+    await supabase.from("share_links").update({enabled:next}).eq("user_id",user.id);
+    setLink(l=>({...l,enabled:next}));
+    setBusy(false);
+  };
+  const regenerate=async()=>{
+    if(!window.confirm("Generate a new link? The old link will stop working immediately."))return;
+    await create();
+  };
+  const copy=()=>{
+    if(!shareUrl)return;
+    navigator.clipboard.writeText(shareUrl).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),1800);});
+  };
+
+  if(!user)return null;
+
+  return(
+    <div style={{padding:".75rem",marginBottom:"1rem",background:"#0f0f1c",border:"1px solid #1e1e35",borderRadius:10}}>
+      <div style={{fontSize:".8rem",color:"#e8e8f4",fontWeight:600,marginBottom:2}}>Share Your Binder</div>
+      <div style={{fontSize:".66rem",color:"#4a4a70",marginBottom:".6rem",lineHeight:1.4}}>Gives anyone with the link a read-only view of just the artists you choose — they can see what you own and what's missing, but can't change anything.</div>
+      {link===undefined?(
+        <div style={{fontSize:".72rem",color:"#4a4a70",display:"flex",alignItems:"center",gap:6}}><IcoSpin/> Checking…</div>
+      ):!link?(
+        <>
+          <ArtistPicker selected={selectedSlugs} onToggle={toggleSlug} onSelectAll={selectAll} onSelectNone={selectNone}/>
+          <button onClick={create} disabled={busy||selectedSlugs.size===0} className="btn-moon" style={{borderRadius:7,padding:".45rem .8rem",fontSize:".75rem",fontWeight:700,width:"100%",marginTop:".6rem",opacity:selectedSlugs.size===0?.5:1}}>{busy?"Creating…":selectedSlugs.size===0?"Pick at least one artist":"Create Share Link"}</button>
+        </>
+      ):(
+        <>
+          <div style={{display:"flex",gap:".4rem",marginBottom:".6rem"}}>
+            <div style={{flex:1,minWidth:0,background:"#141425",border:"1px solid #1e1e35",borderRadius:7,padding:".4rem .55rem",fontSize:".68rem",color:link.enabled?"#9b9bc0":"#4a4a70",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{shareUrl}</div>
+            <button onClick={copy} className="btn-tap" style={{background:"#1e1e35",color:copied?"#22c55e":"#8b6cd8",border:"none",borderRadius:7,padding:".4rem .6rem",fontSize:".7rem",fontWeight:600,flexShrink:0,cursor:"pointer"}}>{copied?"Copied ✓":"Copy"}</button>
+          </div>
+          {!link.enabled&&<div style={{fontSize:".64rem",color:"#f87171",marginBottom:".5rem"}}>Paused — this link won't load for anyone right now.</div>}
+          <button onClick={()=>setShowPicker(s=>!s)} style={{background:"none",border:"none",color:"#9b9bc0",fontSize:".68rem",cursor:"pointer",padding:0,marginBottom:showPicker?".5rem":".7rem",display:"flex",alignItems:"center",gap:4}}>
+            <IcoChev open={showPicker}/> Sharing {savedSlugs.size} of {ARTISTS.length} artists
+          </button>
+          {showPicker&&(
+            <div style={{marginBottom:".6rem"}}>
+              <ArtistPicker selected={selectedSlugs} onToggle={toggleSlug} onSelectAll={selectAll} onSelectNone={selectNone}/>
+              <button onClick={saveArtists} disabled={busy||!slugsDirty||selectedSlugs.size===0} className="btn-moon" style={{borderRadius:7,padding:".4rem .7rem",fontSize:".72rem",fontWeight:700,width:"100%",marginTop:".5rem",opacity:(!slugsDirty||selectedSlugs.size===0)?.5:1}}>{busy?"Saving…":"Save changes"}</button>
+            </div>
+          )}
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:".5rem"}}>
+            <button onClick={toggleEnabled} disabled={busy} className="btn-tap" style={{background:"none",border:"none",color:link.enabled?"#9b9bc0":"#60a5fa",cursor:"pointer",fontSize:".68rem",padding:0}}>{link.enabled?"⏸ Pause link":"▶ Resume link"}</button>
+            <button onClick={regenerate} disabled={busy} className="btn-tap" style={{background:"none",border:"none",color:"#f87171",cursor:"pointer",fontSize:".68rem",padding:0}}>Generate new link</button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function SettingsPanel({onClose,onClearCache,onClearManual,onSignOut,hideTcgPocket,onToggleTcgPocket,user,onUploadCSV}){
+  useEffect(()=>{const fn=e=>{if(e.key==="Escape")onClose();};window.addEventListener("keydown",fn);return()=>window.removeEventListener("keydown",fn);},[onClose]);
+  const btn={width:"100%",borderRadius:8,padding:".45rem",cursor:"pointer",fontSize:".78rem",border:"none"};
+  return(
+    <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:300,background:"rgba(7,7,15,0.8)",backdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",padding:"1rem"}}>
+      <div className="fade-up" onClick={e=>e.stopPropagation()} style={{background:"#141425",border:"1px solid #1e1e35",borderRadius:16,padding:"1.5rem",maxWidth:380,width:"100%"}}>
+        <h3 style={{fontWeight:700,fontSize:"1rem",color:"#e8e8f4",marginBottom:"1.25rem"}}>Settings</h3>
+        <p style={{fontSize:".72rem",color:"#4a4a70",marginBottom:"1rem",lineHeight:1.5}}>Artist card display is sourced from a Supabase sync updated weekly from TCGdex. The local cache expires after 24 hours. TCGdex remains the ingestion layer.</p>
+        <div onClick={onToggleTcgPocket} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:".75rem",padding:".75rem",marginBottom:"1rem",background:"#0f0f1c",border:"1px solid #1e1e35",borderRadius:10,cursor:"pointer"}}>
+          <div>
+            <div style={{fontSize:".8rem",color:"#e8e8f4",fontWeight:600}}>Hide TCG Pocket cards</div>
+            <div style={{fontSize:".66rem",color:"#4a4a70",marginTop:2,lineHeight:1.4}}>Excludes the virtual-only mobile app from your binder</div>
+          </div>
+          <button onClick={e=>{e.stopPropagation();onToggleTcgPocket();}} className="btn-tap" style={{width:38,height:22,borderRadius:11,border:"none",cursor:"pointer",background:hideTcgPocket?"#8b6cd8":"#2a2a45",position:"relative",flexShrink:0,padding:0,transition:"background .15s ease"}}>
+            <span style={{position:"absolute",top:2,left:hideTcgPocket?18:2,width:18,height:18,borderRadius:"50%",background:"#fff",transition:"left .15s ease"}}/>
+          </button>
+        </div>
+        {onUploadCSV&&<div style={{marginBottom:"1rem",padding:".75rem",background:"#0f0f1c",border:"1px solid #1e1e35",borderRadius:10}}><div style={{fontSize:".8rem",color:"#e8e8f4",fontWeight:600,marginBottom:2}}>Sync Collection</div><div style={{fontSize:".66rem",color:"#4a4a70",marginBottom:".6rem",lineHeight:1.4}}>Upload your Collectr CSV export to update which cards you own.</div><button onClick={()=>{onUploadCSV();onClose();}} className="btn-ghost" style={{width:"100%",borderRadius:8,padding:".45rem",fontSize:".78rem",display:"flex",alignItems:"center",justifyContent:"center",gap:".4rem",color:"#8b6cd8"}}><IcoUpload/> Upload Collectr CSV</button></div>}
+        <ShareLinkPanel user={user}/>
+        <div style={{display:"flex",flexDirection:"column",gap:".5rem"}}>
+          <button onClick={()=>{if(window.confirm("Clear card cache? Cards will be re-fetched from Supabase immediately.")){onClearCache();onClose();}}} className="btn-tap" style={{...btn,background:"#200f18",color:"#f87171"}}>Clear card cache</button>
+          <button onClick={()=>{if(window.confirm("Reset all manual overrides?")){onClearManual();onClose();}}} className="btn-tap" style={{...btn,background:"#0f1a20",color:"#60a5fa"}}>Reset all manual overrides</button>
+          <button onClick={()=>{onSignOut();onClose();}} className="btn-tap" style={{...btn,background:"#1a1020",color:"#c084fc"}}>Sign out</button>
+        </div>
+        <button onClick={onClose} className="btn-ghost" style={{width:"100%",marginTop:"1rem",borderRadius:8,padding:".55rem",fontSize:".875rem"}}>Close</button>
+      </div>
+    </div>
+  );
+}
+
+// ── ERROR BOUNDARY ─────────────────────────────────────────────────────────────
+// Safety net: if any single component throws unexpectedly, show a recoverable
+// screen instead of leaving the whole binder blank.
+class ErrorBoundary extends React.Component{
+  constructor(props){super(props);this.state={hasError:false,error:null};}
+  static getDerivedStateFromError(error){return{hasError:true,error};}
+  componentDidCatch(error,info){console.error("Illustrated crashed:",error,info);}
+  render(){
+    if(this.state.hasError){
+      return(
+        <div style={{position:"fixed",inset:0,background:"#07070f",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"2rem",textAlign:"center",gap:"1rem"}}>
+          <BlazLogo size={48}/>
+          <p style={{color:"#f87171",fontSize:"1rem",fontWeight:700}}>Something went wrong.</p>
+          <p style={{color:"#6b6b90",fontSize:".8rem",maxWidth:320,lineHeight:1.5}}>{(this.state.error&&this.state.error.message)||"An unexpected error occurred."}</p>
+          <button onClick={()=>window.location.reload()} style={{background:"linear-gradient(135deg,#ff5500,#ff2200)",color:"#fff",border:"none",borderRadius:8,padding:".65rem 1.75rem",cursor:"pointer",fontWeight:700,fontSize:".85rem"}}>Reload</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// ── APP ────────────────────────────────────────────────────────────────────────
+// ── SHARED (READ-ONLY) BINDER ──────────────────────────────────────────────────
+function SharedBinder({token}){
+  const[status,        setStatus]       =useState("loading"); // loading | invalid | ready
+  const[ownedKeySet,    setOwnedKeySet]  =useState(new Set());
+  const[manualOwned,    setManualOwned]  =useState(new Set());
+  const[manualMissing,  setManualMissing]=useState(new Set());
+  const[favorites,      setFavorites]    =useState(new Set());
+  const[cardData,       setCardData]     =useState({});
+  const[loadingSet,     setLoadingSet]   =useState(new Set());
+  const[errors,         setErrors]       =useState({});
+  const[selectedCard,   setSelectedCard] =useState(null);
+  const[search,         setSearch]       =useState("");
+  const[filterSlug,     setFilterSlug]   =useState("all");
+  const[sortBy,         setSortBy]       =useState("name");
+  const[viewMode,       setViewMode]     =useState(null);
+  const[showAllColor,   setShowAllColor] =useState(false);
+  const[includedSlugs,  setIncludedSlugs]=useState(null); // null = no restriction (older/legacy links)
+  const searchRef=useRef(null);
+
+  useEffect(()=>{
+    let cancelled=false;
+    fetchSharedCollection(token).then(data=>{
+      if(cancelled)return;
+      if(!data){setStatus("invalid");return;}
+      setOwnedKeySet(new Set(data.owned_keys||[]));
+      const mo=new Set(),mm=new Set();
+      (data.overrides||[]).forEach(r=>r.override_type==="owned"?mo.add(r.card_id):mm.add(r.card_id));
+      setManualOwned(mo);setManualMissing(mm);
+      setFavorites(new Set(data.favorites||[]));
+      setIncludedSlugs(data.artist_slugs&&data.artist_slugs.length?new Set(data.artist_slugs):null);
+      setStatus("ready");
+    });
+    return()=>{cancelled=true;};
+  },[token]);
+
+  const sharedArtists=useMemo(()=>includedSlugs?ARTISTS.filter(a=>includedSlugs.has(toSlug(a.name))):ARTISTS,[includedSlugs]);
+
+  const loadEntry=useCallback(async entry=>{
+    const slug=toSlug(entry.name);
+    setLoadingSet(s=>new Set([...s,slug]));setErrors(e=>{const n={...e};delete n[slug];return n;});
+    try{const cards=await fetchArtistCards(entry);setCardData(d=>({...d,[slug]:cards}));}
+    catch(err){setErrors(e=>({...e,[slug]:err.message}));}
+    finally{setLoadingSet(s=>{const n=new Set(s);n.delete(slug);return n;});}
+  },[]);
+  useEffect(()=>{
+    if(status!=="ready")return;
+    let cancelled=false;
+    (async()=>{
+      const CONC=4;
+      for(let i=0;i<sharedArtists.length;i+=CONC){
+        if(cancelled)return;
+        await Promise.all(sharedArtists.slice(i,i+CONC).map(loadEntry));
+      }
+    })();
+    return()=>{cancelled=true;};
+  },[status,loadEntry,sharedArtists]);
+
+  const checkOwned=useCallback(card=>isCardOwned(card,ownedKeySet,manualOwned,manualMissing),[ownedKeySet,manualOwned,manualMissing]);
+  const visibleCardData=useMemo(()=>{
+    const out={};
+    Object.keys(cardData).forEach(slug=>{out[slug]=cardData[slug].filter(c=>!isTcgPocketCard(c));});
+    return out;
+  },[cardData]);
+
+  if(status==="loading")return<div style={{position:"fixed",inset:0,background:"#030100",display:"flex",alignItems:"center",justifyContent:"center"}}><IcoSpin/></div>;
+  if(status==="invalid")return(
+    <div style={{minHeight:"100dvh",background:"#07070f",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:"1rem",padding:"2rem",textAlign:"center"}}>
+      <BlazLogo size={64}/>
+      <h2 style={{color:"#e8e8f4",fontSize:"1.15rem",fontWeight:800}}>This share link isn't active</h2>
+      <p style={{color:"#6b6b90",fontSize:".85rem",maxWidth:320,lineHeight:1.5}}>It may have been revoked, paused, or copied incorrectly. Ask whoever shared it for a fresh link.</p>
+    </div>
+  );
+
+  const visibleArtists=filterSlug==="all"?sharedArtists:sharedArtists.filter(a=>toSlug(a.name)===filterSlug);
+  const totalCards=Object.values(visibleCardData).reduce((s,a)=>s+a.length,0);
+  const totalOwned=Object.values(visibleCardData).reduce((s,cards)=>s+cards.filter(checkOwned).length,0);
+  const totalPct=totalCards?Math.round((totalOwned/totalCards)*100):0;
+  const selSt={background:"#0f0f1c",border:"1px solid #1e1e35",borderRadius:8,color:"#e8e8f4",padding:".4rem .6rem",fontSize:".76rem"};
+
+  return(
+    <div className={showAllColor?"color-mode":""} style={{minHeight:"100dvh",background:"#07070f"}}>
+      <header style={{position:"sticky",top:0,zIndex:100,background:"rgba(7,7,15,0.97)",backdropFilter:"blur(18px)",WebkitBackdropFilter:"blur(18px)",borderBottom:"1px solid #1e1e35"}}>
+        <div style={{maxWidth:860,margin:"0 auto",padding:".7rem 1rem"}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:".6rem",flexWrap:"wrap",gap:".5rem"}}>
+            <div style={{display:"flex",alignItems:"center",gap:".5rem"}}>
+              <BlazLogo size={26}/>
+              <div style={{display:"flex",alignItems:"baseline",gap:".5rem",flexWrap:"wrap"}}>
+                <span className="font-display" style={{fontWeight:600,fontSize:"1.02rem",color:"#e8e8f4",letterSpacing:"-.01em"}}>Illustrated</span>
+                {totalCards>0&&<span style={{fontSize:".7rem",color:"#6b6b90",fontVariantNumeric:"tabular-nums"}}>{totalOwned}/{totalCards} · {totalPct}%</span>}
+              </div>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:".5rem"}}>
+              <button onClick={()=>setShowAllColor(v=>!v)} className="btn-ghost" title={showAllColor?"Showing missing cards in color":"Showing missing cards grayed out"} style={{color:showAllColor?"#c0589e":"#6b6b90",borderRadius:8,padding:".38rem",display:"flex",background:showAllColor?"rgba(192,88,158,0.12)":undefined,border:showAllColor?"1px solid rgba(192,88,158,0.3)":undefined}}><IcoContrast/></button>
+              <span style={{fontSize:".68rem",color:"#c0589e",background:"rgba(192,88,158,0.12)",border:"1px solid rgba(192,88,158,0.28)",padding:"3px 9px",borderRadius:6,fontWeight:600,display:"flex",alignItems:"center",gap:5}}><IcoEye/> View only</span>
+            </div>
+          </div>
+          <div style={{display:"flex",gap:".5rem",flexWrap:"wrap"}}>
+            <div style={{flex:"1 1 160px",position:"relative",minWidth:0}}>
+              <span style={{position:"absolute",left:".6rem",top:"50%",transform:"translateY(-50%)",color:"#6b6b90",display:"flex",pointerEvents:"none"}}><IcoSearch/></span>
+              <input ref={searchRef} type="search" placeholder="Search cards…" value={search} onChange={e=>setSearch(e.target.value)} style={{...selSt,width:"100%",padding:".4rem 2rem .4rem 2rem",fontSize:".85rem"}}/>
+              {search&&<button onClick={()=>{setSearch("");searchRef.current&&searchRef.current.focus();}} style={{position:"absolute",right:".4rem",top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:"#6b6b90",cursor:"pointer",display:"flex"}}><IcoX/></button>}
+            </div>
+            <select value={filterSlug} onChange={e=>setFilterSlug(e.target.value)} style={{...selSt,maxWidth:148}}>
+              <option value="all">All Artists</option>
+              <optgroup label="Main">{sharedArtists.filter(a=>a.tier==="main").map(a=><option key={a.name} value={toSlug(a.name)}>{a.name}</option>)}</optgroup>
+              <optgroup label="Secondary">{sharedArtists.filter(a=>a.tier==="secondary").map(a=><option key={a.name} value={toSlug(a.name)}>{a.name}</option>)}</optgroup>
+              <optgroup label="Special">{ARTISTS.filter(a=>a.tier==="special").map(a=><option key={a.name} value={toSlug(a.name)}>{a.name}</option>)}</optgroup>
+            </select>
+            <div style={{display:"flex",gap:".3rem",alignItems:"center",flexShrink:0}}>
+              <button onClick={()=>setViewMode(viewMode==="missing"?null:"missing")} style={{background:viewMode==="missing"?"rgba(139,108,216,0.2)":"#0f0f1c",color:viewMode==="missing"?"#c0a0f8":"#6b6b90",border:`1px solid ${viewMode==="missing"?"#8b6cd8":"#1e1e35"}`,borderRadius:7,padding:".38rem .65rem",cursor:"pointer",fontSize:".74rem",fontWeight:viewMode==="missing"?700:500,whiteSpace:"nowrap"}}>Missing</button>
+              <button onClick={()=>setViewMode(viewMode==="owned"?null:"owned")} style={{background:viewMode==="owned"?"rgba(34,197,94,0.12)":"#0f0f1c",color:viewMode==="owned"?"#6ee7b7":"#6b6b90",border:`1px solid ${viewMode==="owned"?"#22c55e":"#1e1e35"}`,borderRadius:7,padding:".38rem .65rem",cursor:"pointer",fontSize:".74rem",fontWeight:viewMode==="owned"?700:500,whiteSpace:"nowrap"}}>Owned</button>
+              <button onClick={()=>setViewMode(null)} style={{background:viewMode===null?"rgba(100,100,160,0.2)":"#0f0f1c",color:viewMode===null?"#b0b0e8":"#6b6b90",border:`1px solid ${viewMode===null?"#6060a0":"#1e1e35"}`,borderRadius:7,padding:".38rem .6rem",cursor:"pointer",fontSize:".74rem",fontWeight:viewMode===null?700:500,whiteSpace:"nowrap"}}>A–Z</button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main style={{maxWidth:860,margin:"0 auto",padding:"1rem"}}>
+        {totalCards>0&&<div style={{height:2,background:"#1e1e35",borderRadius:1,overflow:"hidden",marginBottom:"1.5rem"}}><div className="prog-fill" style={{width:`${totalPct}%`,height:"100%",background:"linear-gradient(90deg,#ff4400,#ff8800 50%,#c0589e 80%,#8b6cd8 100%)",borderRadius:1}}/></div>}
+        {visibleArtists.map(entry=>{
+          const slug=toSlug(entry.name),cards=visibleCardData[slug]||[];
+          const isLoading=loadingSet.has(slug),err=errors[slug];
+          if(isLoading&&!cards.length)return<div key={entry.name} style={{display:"flex",alignItems:"center",gap:".5rem",padding:".6rem 0",color:"#6b6b90",fontSize:".8rem"}}><IcoSpin/> Loading {entry.name}…</div>;
+          if(err||!cards.length)return null;
+          return<ArtistSection key={entry.name} entry={entry} cards={cards} checkOwned={checkOwned} manualOwned={manualOwned} manualMissing={manualMissing} favorites={favorites} onCardClick={setSelectedCard} onToggleFavorite={()=>{}} searchQuery={search} sortBy={sortBy} viewMode={viewMode} readOnly/>;
+        })}
+        {search&&!visibleArtists.some(entry=>{const cards=visibleCardData[toSlug(entry.name)]||[];const q=search.toLowerCase();return cards.some(c=>(c.name||"").toLowerCase().includes(q));})&&(
+          <div style={{textAlign:"center",padding:"3rem 1rem",color:"#6b6b90",fontSize:".875rem"}}>No cards matching "{search}"</div>
+        )}
+        <div style={{marginTop:"3rem",paddingTop:"1rem",borderTop:"1px solid #1e1e35",fontSize:".62rem",color:"#2a2a3a",textAlign:"center",letterSpacing:".1em"}}>Komiya · Morii · Kanda · Nishida</div>
+      </main>
+
+      {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(selectedCard.id)} priceHistory={{}} onToggleManual={()=>{}} onToggleFavorite={()=>{}} onRecordPrice={()=>{}} onClose={()=>setSelectedCard(null)} readOnly/>}
+    </div>
+  );
+}
+
+function App(){
+  const[view,          setView]         =useState("checking-auth");
+  const[artistSlug,    setArtistSlug]   =useState(null);
+  const[user,          setUser]         =useState(null);
+  const[cardData,      setCardData]     =useState({});
+  const[loadingSet,    setLoadingSet]   =useState(new Set());
+  const[errors,        setErrors]       =useState({});
+  const[ownedKeySet,   setOwnedKeySet]  =useState(new Set());
+  const[manualOwned,   setManualOwned]  =useState(new Set());
+  const[manualMissing, setManualMissing]=useState(new Set());
+  const[favorites,     setFavorites]    =useState(new Set());
+  const[priceHistory,  setPriceHistory] =useState({});
+  const[selectedCard,  setSelectedCard] =useState(null);
+  const[search,        setSearch]       =useState("");
+  const[filterSlug,    setFilterSlug]   =useState("all");
+  const[sortBy,        setSortBy]       =useState("name");
+  const[viewMode,      setViewMode]     =useState(null);
+  const[showSettings,  setShowSettings] =useState(false);
+  const[hideTcgPocket, setHideTcgPocket]=useState(()=>{const v=lsGet("pb_hide_tcgp");return v===null?true:v;});
+  const[showAllColor, setShowAllColor] =useState(()=>{const v=lsGet("pb_show_all_color");return v===null?false:v;});
+  const[csvStatus,     setCsvStatus]    =useState(null);
+  const[syncStatus,    setSyncStatus]   =useState("idle");
+  const fileRef=useRef(null),searchRef=useRef(null);
+
+  const withSync=async fn=>{setSyncStatus("syncing");try{await fn();setSyncStatus("synced");setTimeout(()=>setSyncStatus("idle"),2000);}catch(e){console.error(e);setSyncStatus("error");setTimeout(()=>setSyncStatus("idle"),3000);}};
+
+  const loadData=useCallback(async uid=>{
+    setView("loading-data");
+    try{
+      const{ownedKeys,manualOwned:mo,manualMissing:mm,priceHistory:ph,favorites:fav}=await loadUserData(uid);
+      setOwnedKeySet(ownedKeys);setManualOwned(mo);setManualMissing(mm);setPriceHistory(ph);setFavorites(fav);
+    }catch(e){console.error("Load error:",e);}
+    setView("dashboard");
+  },[]);
+
+  useEffect(()=>{
+    supabase.auth.getSession().then(({data:{session}})=>{if(session?.user){setUser(session.user);loadData(session.user.id);}else setView("landing");});
+    const{data:{subscription}}=supabase.auth.onAuthStateChange(async(event,session)=>{
+      if((event==="SIGNED_IN"||event==="TOKEN_REFRESHED")&&session?.user){setUser(session.user);if(view==="landing"||view==="checking-auth")loadData(session.user.id);}
+      else if(event==="SIGNED_OUT"){setUser(null);setOwnedKeySet(new Set());setManualOwned(new Set());setManualMissing(new Set());setFavorites(new Set());setPriceHistory({});setView("landing");}
+    });
+    return()=>subscription.unsubscribe();
+  },[]);
+
+  const handleSendLink=async email=>{const{error}=await supabase.auth.signInWithOtp({email,options:{shouldCreateUser:true}});if(error)throw error;};
+  const handleVerifyCode=async(email,token)=>{const{error}=await supabase.auth.verifyOtp({email,token,type:"email"});if(error)throw error;};
+  const handleSignOut=()=>supabase.auth.signOut();
+
+  const loadEntry=useCallback(async entry=>{
+    const slug=toSlug(entry.name);
+    setLoadingSet(s=>new Set([...s,slug]));setErrors(e=>{const n={...e};delete n[slug];return n;});
+    try{const cards=await fetchArtistCards(entry);setCardData(d=>({...d,[slug]:cards}));}
+    catch(err){setErrors(e=>({...e,[slug]:err.message}));}
+    finally{setLoadingSet(s=>{const n=new Set(s);n.delete(slug);return n;});}
+  },[]);
+  // Load artists in small concurrent groups rather than firing all 21 (and their
+  // batched per-card fetches) at once — a full burst can spike to 150-200+
+  // simultaneous Supabase queries and risks connection pool pressure.
+  const ARTIST_CONCURRENCY=4;
+  const loadAllEntries=useCallback(async()=>{
+    for(let i=0;i<ARTISTS.length;i+=ARTIST_CONCURRENCY){
+      const chunk=ARTISTS.slice(i,i+ARTIST_CONCURRENCY);
+      await Promise.all(chunk.map(loadEntry));
+    }
+  },[loadEntry]);
+  useEffect(()=>{loadAllEntries();},[]);
+
+  const handleCSV=useCallback(file=>{
+    setCsvStatus("loading");
+    Papa.parse(file,{header:true,skipEmptyLines:true,complete:async({data})=>{
+      const pokemon=data.filter(r=>(r["Category"]||"").trim()==="Pokemon");
+      const keys=new Set();pokemon.forEach(r=>makeKeys(r["Product Name"]||"",r["Card Number"]||"",r["Set"]||"").forEach(k=>keys.add(k)));
+      setOwnedKeySet(keys);setCsvStatus({count:pokemon.length});setTimeout(()=>setCsvStatus(null),5000);
+      if(user)withSync(()=>saveCollection(user.id,keys));
+    },error:()=>{setCsvStatus(null);alert("Could not read CSV.");}});
+  },[user]);
+
+  const handleToggleManual=useCallback((cardId,action)=>{
+    let fa=action;
+    setManualOwned(prev=>{const n=new Set(prev);if(action==="owned"){n.has(cardId)?n.delete(cardId):n.add(cardId);fa=n.has(cardId)?"owned":"reset";}else if(action==="reset")n.delete(cardId);return n;});
+    setManualMissing(prev=>{const n=new Set(prev);if(action==="missing"){n.has(cardId)?n.delete(cardId):n.add(cardId);fa=n.has(cardId)?"missing":"reset";}else if(action==="reset")n.delete(cardId);return n;});
+    if(user)withSync(()=>saveOverride(user.id,cardId,fa));
+  },[user]);
+
+  const handleToggleFavorite=useCallback(cardId=>{
+    setFavorites(prev=>{
+      const n=new Set(prev);const wasFav=n.has(cardId);
+      wasFav?n.delete(cardId):n.add(cardId);
+      if(user){wasFav?supabase.from("card_favorites").delete().eq("user_id",user.id).eq("card_id",cardId).then():supabase.from("card_favorites").insert({user_id:user.id,card_id:cardId}).then();}
+      return n;
+    });
+  },[user]);
+
+  const handleRecordPrice=useCallback((cardId,price,date)=>{
+    setPriceHistory(prev=>{const n={...prev};if(!n[cardId])n[cardId]=[];if(!n[cardId].find(h=>h.date===date)){n[cardId]=[...n[cardId],{date,price}].slice(-180);if(user)savePricePoint(user.id,cardId,price,date).catch(console.error);}return n;});
+  },[user]);
+
+  const clearCache=()=>{
+    ARTISTS.forEach(e=>{
+      lsDel(`pb6_cards_${toSlug(e.name)}`);  // old TCGdex cache
+      lsDel(`pb7_supa_${toSlug(e.name)}`);   // current Supabase cache
+    });
+    // Purge per-card fallback image cache so stale "not found" results
+    // don't persist after TCGdex gains images for previously imageless cards.
+    Object.keys(localStorage).filter(k=>k.startsWith("pb_fallback_img_")).forEach(k=>lsDel(k));
+    setCardData({});setErrors({});loadAllEntries();
+  };
+  const clearManual=async()=>{setManualOwned(new Set());setManualMissing(new Set());if(user)withSync(async()=>{await supabase.from("card_overrides").delete().eq("user_id",user.id);});};
+  const toggleHideTcgPocket=()=>setHideTcgPocket(v=>{const n=!v;lsSet("pb_hide_tcgp",n);return n;});
+  const toggleShowAllColor=()=>setShowAllColor(v=>{const n=!v;lsSet("pb_show_all_color",n);return n;});
+
+  // The raw cardData (used for caching, CSV matching, etc.) stays untouched —
+  // this is only the display/stat layer, so toggling never affects ownership data.
+  const visibleCardData=useMemo(()=>{
+    if(!hideTcgPocket)return cardData;
+    const out={};
+    Object.keys(cardData).forEach(slug=>{out[slug]=cardData[slug].filter(c=>!isTcgPocketCard(c));});
+    return out;
+  },[cardData,hideTcgPocket]);
+
+  const checkOwned=useCallback(card=>isCardOwned(card,ownedKeySet,manualOwned,manualMissing),[ownedKeySet,manualOwned,manualMissing]);
+
+  const goTo=useCallback((target)=>{
+    if(target==="landing"){setView("landing");return;}
+    if(target==="dashboard"){setView("dashboard");return;}
+    if(target==="binder"){setView("binder");return;}
+    if(target.startsWith("artist:")){const slug=target.replace("artist:","");setArtistSlug(slug);setView("artist");return;}
+    if(ARTISTS.some(a=>toSlug(a.name)===target)){setFilterSlug(target);setView("binder");return;}
+    setView(target);
+  },[]);
+
+  if(view==="checking-auth")return<div style={{position:"fixed",inset:0,background:"#030100",display:"flex",alignItems:"center",justifyContent:"center"}}><IcoSpin/></div>;
+
+  if(view==="loading-data")return(
+    <div style={{position:"fixed",inset:0,background:"radial-gradient(ellipse at 50% 110%,#3d0f00 0%,#1a0500 40%,#030100 100%)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:"1rem",overflow:"hidden"}}>
+      <FlameBackground dim/>
+      <div style={{position:"relative",zIndex:10,textAlign:"center"}}><BlazLogo size={64} glow/><p style={{color:"#ff9944",fontSize:".875rem",marginTop:".75rem"}}>Loading your collection…</p></div>
+    </div>
+  );
+
+  if(view==="landing")return<LandingPage user={user} onEnter={()=>setView("dashboard")} onSendLink={handleSendLink} onVerifyCode={handleVerifyCode} onSignOut={handleSignOut}/>;
+
+  if(view==="dashboard")return(
+    <>
+      <Dashboard cardData={visibleCardData} checkOwned={checkOwned} favorites={favorites} user={user} csvStatus={csvStatus} syncStatus={syncStatus} onGoBinder={goTo} onUploadCSV={()=>fileRef.current&&fileRef.current.click()} loadingSet={loadingSet} errors={errors} onCardClick={setSelectedCard}/>
+      {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(selectedCard.id)} priceHistory={priceHistory} onToggleManual={handleToggleManual} onToggleFavorite={handleToggleFavorite} onRecordPrice={handleRecordPrice} onClose={()=>setSelectedCard(null)}/>}
+      <input ref={fileRef} type="file" accept=".csv" onChange={e=>{const f=e.target.files&&e.target.files[0];if(f)handleCSV(f);e.target.value="";}} style={{display:"none"}}/>
+    </>
+  );
+
+  if(view==="artist"&&artistSlug){
+    const entry=ARTISTS.find(a=>toSlug(a.name)===artistSlug);
+    const cards=visibleCardData[artistSlug]||[];
+    return(<>
+      <ArtistPage slug={artistSlug} entry={entry} cards={cards} checkOwned={checkOwned} manualOwned={manualOwned} manualMissing={manualMissing} favorites={favorites} onCardClick={setSelectedCard} onToggleFavorite={handleToggleFavorite} onBack={()=>setView("dashboard")}/>
+      {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(selectedCard.id)} priceHistory={priceHistory} onToggleManual={handleToggleManual} onToggleFavorite={handleToggleFavorite} onRecordPrice={handleRecordPrice} onClose={()=>setSelectedCard(null)}/>}
+      <input ref={fileRef} type="file" accept=".csv" onChange={e=>{const f=e.target.files&&e.target.files[0];if(f)handleCSV(f);e.target.value="";}} style={{display:"none"}}/>
+    </>);
+  }
+
+  const visibleArtists=filterSlug==="all"?ARTISTS:ARTISTS.filter(a=>toSlug(a.name)===filterSlug);
+  const totalCards=Object.values(visibleCardData).reduce((s,a)=>s+a.length,0);
+  const totalOwned=Object.values(visibleCardData).reduce((s,cards)=>s+cards.filter(checkOwned).length,0);
+  const totalPct=totalCards?Math.round((totalOwned/totalCards)*100):0;
+  const manualCount=manualOwned.size+manualMissing.size;
+  const selSt={background:"#0f0f1c",border:"1px solid #1e1e35",borderRadius:8,color:"#e8e8f4",padding:".4rem .6rem",fontSize:".76rem"};
+  const syncIcon=syncStatus==="syncing"?<IcoSpin/>:syncStatus==="synced"?<span style={{color:"#22c55e",fontSize:".65rem"}}>✓</span>:null;
+
+  return(
+    <div className={showAllColor?"color-mode":""} style={{minHeight:"100dvh",background:"#07070f"}}>
+      <header style={{position:"sticky",top:0,zIndex:100,background:"rgba(7,7,15,0.97)",backdropFilter:"blur(18px)",WebkitBackdropFilter:"blur(18px)",borderBottom:"1px solid #1e1e35"}}>
+        <div style={{maxWidth:860,margin:"0 auto",padding:".7rem 1rem"}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:".6rem"}}>
+            <div style={{display:"flex",alignItems:"center",gap:".5rem",cursor:"pointer"}} onClick={()=>setView("dashboard")}>
+              <BlazLogo size={26}/>
+              <div style={{display:"flex",alignItems:"baseline",gap:".5rem"}}>
+                <span className="font-display" style={{fontWeight:600,fontSize:"1.02rem",color:"#e8e8f4",letterSpacing:"-.01em"}}>Illustrated</span>
+                {totalCards>0&&<span style={{fontSize:".7rem",color:"#6b6b90",fontVariantNumeric:"tabular-nums"}}>{totalOwned}/{totalCards} · {totalPct}%</span>}
+                {manualCount>0&&<span style={{fontSize:".62rem",color:"#60a5fa",background:"rgba(96,165,250,0.1)",padding:"1px 6px",borderRadius:4}}>{manualCount} manual</span>}
+                {syncIcon&&<span style={{display:"flex",alignItems:"center",gap:3}}>{syncIcon}</span>}
+              </div>
+            </div>
+            <div style={{display:"flex",gap:".4rem",alignItems:"center"}}>
+              {csvStatus==="loading"&&<span style={{fontSize:".7rem",color:"#6b6b90",display:"flex",alignItems:"center",gap:4}}><IcoSpin/>Reading…</span>}
+              {csvStatus?.count&&<span style={{fontSize:".7rem",color:"#22c55e"}}>✓ {csvStatus.count}</span>}
+              
+              <button onClick={toggleShowAllColor} className="btn-ghost" title={showAllColor?"Showing missing cards in color":"Showing missing cards grayed out"} style={{color:showAllColor?"#c0589e":"#6b6b90",borderRadius:8,padding:".38rem",display:"flex",background:showAllColor?"rgba(192,88,158,0.12)":undefined,border:showAllColor?"1px solid rgba(192,88,158,0.3)":undefined}}><IcoContrast/></button>
+              <button onClick={()=>setShowSettings(true)} className="btn-ghost" style={{color:"#6b6b90",borderRadius:8,padding:".38rem",display:"flex"}}><IcoGear/></button>
+              <input ref={fileRef} type="file" accept=".csv" onChange={e=>{const f=e.target.files&&e.target.files[0];if(f)handleCSV(f);e.target.value="";}} style={{display:"none"}}/>
+            </div>
+          </div>
+          <div style={{display:"flex",gap:".5rem",flexWrap:"wrap"}}>
+            <div style={{flex:"1 1 160px",position:"relative",minWidth:0}}>
+              <span style={{position:"absolute",left:".6rem",top:"50%",transform:"translateY(-50%)",color:"#6b6b90",display:"flex",pointerEvents:"none"}}><IcoSearch/></span>
+              <input ref={searchRef} type="search" placeholder="Search cards…" value={search} onChange={e=>setSearch(e.target.value)} style={{...selSt,width:"100%",padding:".4rem 2rem .4rem 2rem",fontSize:".85rem"}}/>
+              {search&&<button onClick={()=>{setSearch("");searchRef.current&&searchRef.current.focus();}} style={{position:"absolute",right:".4rem",top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:"#6b6b90",cursor:"pointer",display:"flex"}}><IcoX/></button>}
+            </div>
+            <select value={filterSlug} onChange={e=>setFilterSlug(e.target.value)} style={{...selSt,maxWidth:148}}>
+              <option value="all">All Artists</option>
+              <optgroup label="Main">{ARTISTS.filter(a=>a.tier==="main").map(a=><option key={a.name} value={toSlug(a.name)}>{a.name}</option>)}</optgroup>
+              <optgroup label="Secondary">{ARTISTS.filter(a=>a.tier==="secondary").map(a=><option key={a.name} value={toSlug(a.name)}>{a.name}</option>)}</optgroup>
+              <optgroup label="Special">{ARTISTS.filter(a=>a.tier==="special").map(a=><option key={a.name} value={toSlug(a.name)}>{a.name}</option>)}</optgroup>
+            </select>
+            <div style={{display:"flex",gap:".3rem",alignItems:"center",flexShrink:0}}>
+              <button onClick={()=>setViewMode(viewMode==="missing"?null:"missing")} style={{background:viewMode==="missing"?"rgba(139,108,216,0.2)":"#0f0f1c",color:viewMode==="missing"?"#c0a0f8":"#6b6b90",border:`1px solid ${viewMode==="missing"?"#8b6cd8":"#1e1e35"}`,borderRadius:7,padding:".38rem .65rem",cursor:"pointer",fontSize:".74rem",fontWeight:viewMode==="missing"?700:500,transition:"all .15s",whiteSpace:"nowrap"}}>Missing</button>
+              <button onClick={()=>setViewMode(viewMode==="owned"?null:"owned")} style={{background:viewMode==="owned"?"rgba(34,197,94,0.12)":"#0f0f1c",color:viewMode==="owned"?"#6ee7b7":"#6b6b90",border:`1px solid ${viewMode==="owned"?"#22c55e":"#1e1e35"}`,borderRadius:7,padding:".38rem .65rem",cursor:"pointer",fontSize:".74rem",fontWeight:viewMode==="owned"?700:500,transition:"all .15s",whiteSpace:"nowrap"}}>Owned</button>
+              <select value={sortBy} onChange={e=>setSortBy(e.target.value)} style={{...selSt,fontSize:".72rem",paddingLeft:".5rem",paddingRight:".5rem",maxWidth:80}}>
+                <option value="name">A–Z</option>
+                <option value="price-desc">$↓</option>
+                <option value="price-asc">$↑</option>
+                <option value="date-desc">New</option>
+                <option value="date-asc">Old</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main style={{maxWidth:860,margin:"0 auto",padding:"1rem"}}>
+        {totalCards>0&&<div style={{height:2,background:"#1e1e35",borderRadius:1,overflow:"hidden",marginBottom:"1.5rem"}}><div className="prog-fill" style={{width:`${totalPct}%`,height:"100%",background:"#8b6cd8",borderRadius:1}}/></div>}
+        {visibleArtists.map(entry=>{
+          const slug=toSlug(entry.name),cards=visibleCardData[slug]||[];
+          const isLoading=loadingSet.has(slug),err=errors[slug];
+          if(isLoading&&!cards.length)return<div key={entry.name} style={{display:"flex",alignItems:"center",gap:".5rem",padding:".6rem 0",color:"#6b6b90",fontSize:".8rem"}}><IcoSpin/> Loading {entry.name}…</div>;
+          if(err)return<div key={entry.name} style={{padding:".6rem 0",fontSize:".78rem",color:"#f87171",display:"flex",alignItems:"center",gap:".5rem"}}><span>⚠ {entry.name}: {err}</span><button onClick={()=>loadEntry(entry)} style={{color:"#8b6cd8",background:"none",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:3,fontSize:".75rem"}}><IcoRetry/> retry</button></div>;
+          if(!cards.length)return null;
+          return<ArtistSection key={entry.name} entry={entry} cards={cards} checkOwned={checkOwned} manualOwned={manualOwned} manualMissing={manualMissing} favorites={favorites} onCardClick={setSelectedCard} onToggleFavorite={handleToggleFavorite} searchQuery={search} sortBy={sortBy} viewMode={viewMode}/>;
+        })}
+        {search&&!visibleArtists.some(entry=>{const cards=visibleCardData[toSlug(entry.name)]||[];const q=search.toLowerCase();return cards.some(c=>(c.name||"").toLowerCase().includes(q));})&&(
+          <div style={{textAlign:"center",padding:"3rem 1rem",color:"#6b6b90",fontSize:".875rem"}}>No cards matching "{search}"</div>
+        )}
+        <div style={{marginTop:"3rem",paddingTop:"1rem",borderTop:"1px solid #1e1e35",fontSize:".62rem",color:"#2a2a3a",textAlign:"center",letterSpacing:".1em"}}>Komiya · Morii · Kanda · Nishida</div>
+      </main>
+
+      {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(selectedCard.id)} priceHistory={priceHistory} onToggleManual={handleToggleManual} onToggleFavorite={handleToggleFavorite} onRecordPrice={handleRecordPrice} onClose={()=>setSelectedCard(null)}/>}
+      {showSettings&&<SettingsPanel onClose={()=>setShowSettings(false)} onClearCache={clearCache} onClearManual={clearManual} onSignOut={()=>{handleSignOut();setShowSettings(false);}} hideTcgPocket={hideTcgPocket} onToggleTcgPocket={toggleHideTcgPocket} user={user} onUploadCSV={()=>fileRef.current&&fileRef.current.click()}/>}
+    </div>
+  );
+}
+
+
+// ── Exports ───────────────────────────────────────────────────────────────────
+export { App, SharedBinder, ErrorBoundary };
