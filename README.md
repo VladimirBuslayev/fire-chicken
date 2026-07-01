@@ -14,11 +14,13 @@ The project is currently in MVP stage.
 
 ## Current status
 
-The app is currently deployed through GitHub Pages and is still primarily a single-file MVP.
+The app is deployed through Vercel at https://illustratedvault.com.
 
-Current focus:
+Gate 2 is complete. The Vite/React app is now in production, served from the
+`gate-2/vite-migration` branch via Vercel. `main` contains the merged Vite project.
 
-Gate 1 — stabilize the current MVP before migration or major new features.
+Current focus: post-Gate-2 stabilization. Deferred cleanup (Vercel production branch
+migration to `main`, legacy files, GitHub Pages, Supabase redirect URLs) is in progress.
 
 ## Documentation
 
@@ -30,3 +32,4 @@ See:
 - [Roadmap](docs/ROADMAP.md)
 - [Decision Log](docs/DECISION_LOG.md)
 - [Changelog](docs/CHANGELOG.md)
+
