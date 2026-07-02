@@ -48,6 +48,7 @@ const Ico=({children,size})=><svg width={size||16} height={size||16} viewBox="0 
 const IcoSearch=()=><Ico><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></Ico>;
 const IcoUpload=()=><Ico><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></Ico>;
 const IcoX    =()=><Ico><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></Ico>;
+const IcoDownload=()=><Ico size={13}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></Ico>;
 const IcoGear =()=><Ico><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></Ico>;
 const IcoCheck=()=><Ico><polyline points="20 6 9 17 4 12"/></Ico>;
 const IcoRetry=()=><Ico><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.51"/></Ico>;
@@ -991,6 +992,34 @@ function SharedBinder({token}){
   );
 
   const visibleArtists=filterSlug==="all"?sharedArtists:sharedArtists.filter(a=>toSlug(a.name)===filterSlug);
+  const exportMissingCSV=useCallback(()=>{
+    // Read-only, client-side export of the missing-card list currently represented by this
+    // shared link: respects the share's artist selection, the viewer's artist dropdown, and
+    // TCG Pocket filtering (visibleCardData). Intentionally ignores the search box so a
+    // transient search never silently truncates a shop-owner export. No intent, favorites,
+    // or private user data — only what the page already displays.
+    const esc=v=>`"${String(v==null?"":v).replace(/"/g,'""')}"`;
+    const rows=[["Artist","Card Name","Set","Set ID","Card Number","Rarity","Illustrator","Market Price (USD)","Card ID"]];
+    visibleArtists.forEach(entry=>{
+      const slug=toSlug(entry.name);
+      const missing=(visibleCardData[slug]||[]).filter(c=>!checkOwned(c)).slice().sort((a,b)=>{
+        const oa=SET_ORDER[(a.set&&a.set.id)]??999,ob=SET_ORDER[(b.set&&b.set.id)]??999;
+        if(oa!==ob)return oa-ob;
+        return String(a.localId||"").localeCompare(String(b.localId||""),undefined,{numeric:true});
+      });
+      missing.forEach(card=>{
+        const p=getBestPrice(card);
+        rows.push([entry.name,card.name||"",(card.set&&card.set.name)||"",(card.set&&card.set.id)||"",card.localId||"",card.rarity||"",card.illustrator||"",(p&&p.amount!=null)?p.amount.toFixed(2):"",card.id||""]);
+      });
+    });
+    const csv="\uFEFF"+rows.map(r=>r.map(esc).join(",")).join("\r\n");
+    const blob=new Blob([csv],{type:"text/csv;charset=utf-8;"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    a.href=url;a.download=`illustrated-vault-missing-${todayStr()}.csv`;
+    document.body.appendChild(a);a.click();document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  },[visibleArtists,visibleCardData,checkOwned]);
   const totalCards=Object.values(visibleCardData).reduce((s,a)=>s+a.length,0);
   const totalOwned=Object.values(visibleCardData).reduce((s,cards)=>s+cards.filter(checkOwned).length,0);
   const totalPct=totalCards?Math.round((totalOwned/totalCards)*100):0;
@@ -1010,6 +1039,7 @@ function SharedBinder({token}){
             </div>
             <div style={{display:"flex",alignItems:"center",gap:".5rem"}}>
               <button onClick={()=>setShowAllColor(v=>!v)} className="btn-ghost" title={showAllColor?"Showing missing cards in color":"Showing missing cards grayed out"} style={{color:showAllColor?"#c0589e":"#6b6b90",borderRadius:8,padding:".38rem",display:"flex",background:showAllColor?"rgba(192,88,158,0.12)":undefined,border:showAllColor?"1px solid rgba(192,88,158,0.3)":undefined}}><IcoContrast/></button>
+              <button onClick={exportMissingCSV} className="btn-ghost" title="Download the missing-cards list as a CSV (opens in Excel)" style={{color:"#8b6cd8",borderRadius:8,padding:".38rem .6rem",display:"flex",alignItems:"center",gap:".35rem",fontSize:".7rem",fontWeight:600,border:"1px solid #1e1e35",whiteSpace:"nowrap",cursor:"pointer"}}><IcoDownload/> Missing CSV</button>
               <span style={{fontSize:".68rem",color:"#c0589e",background:"rgba(192,88,158,0.12)",border:"1px solid rgba(192,88,158,0.28)",padding:"3px 9px",borderRadius:6,fontWeight:600,display:"flex",alignItems:"center",gap:5}}><IcoEye/> View only</span>
             </div>
           </div>
