@@ -1,20 +1,7 @@
 // src/App.jsx
-// Gate 2 — Phase 5B: Full React component tree port from index.legacy.html.
-//
-// Source: index.legacy.html lines 446–1665 (JSX/component block).
-// Lines 96–445 (constants, utils, services) are in their Phase 3/4 modules.
-// Lines 1666–1667 (ReactDOM.createRoot + SHARE_TOKEN) are in src/main.jsx.
-//
-// Substitutions applied (behavior unchanged):
-//   LOGO_DATA_URI → import logoSrc (same asset, Phase 2A extraction)
-//   fmt$()        → fmtPrice()     (renamed in format.js; identical logic)
-//   sb.*          → supabase.*     (ES module client; identical connection)
-//   Papa          → import Papa    (same papaparse@5.4.1; identical API)
-//
-// REDIRECT (line 103) defined but never referenced in component code — omitted.
-// useEnter/useLeave: not custom hooks; are onMouseEnter/onMouseLeave JSX props.
-//
-// Do not add features, redesign, or change behavior during Gate 2.
+// Illustrated Vault — main React component tree.
+// Vite/React app served from Vercel. Supabase is the runtime data source.
+// This file still contains the main component tree while the app remains in single-file MVP evolution.
 
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import Papa from 'papaparse';
@@ -325,7 +312,6 @@ function Dashboard({cardData,checkOwned,favorites,user,onGoBinder,onUploadCSV,cs
 
         <div style={{textAlign:"center",padding:"1.5rem 0 3rem"}}>
           <button onClick={()=>onGoBinder("binder")} className="btn-flame" style={{borderRadius:50,padding:".85rem 2.5rem",fontSize:".95rem",fontWeight:800,letterSpacing:".08em",boxShadow:"0 0 30px rgba(255,60,0,0.35)"}}>OPEN FULL BINDER →</button>
-          <div style={{marginTop:"2rem",fontSize:".6rem",letterSpacing:".14em",color:"#2a1408"}}>Komiya · Morii · Kanda · Nishida</div>
         </div>
       </div>
     </div>
@@ -1079,7 +1065,6 @@ function SharedBinder({token}){
         {search&&!visibleArtists.some(entry=>{const cards=visibleCardData[toSlug(entry.name)]||[];const q=search.toLowerCase();return cards.some(c=>(c.name||"").toLowerCase().includes(q));})&&(
           <div style={{textAlign:"center",padding:"3rem 1rem",color:"#6b6b90",fontSize:".875rem"}}>No cards matching "{search}"</div>
         )}
-        <div style={{marginTop:"3rem",paddingTop:"1rem",borderTop:"1px solid #1e1e35",fontSize:".62rem",color:"#2a2a3a",textAlign:"center",letterSpacing:".1em"}}>Komiya · Morii · Kanda · Nishida</div>
       </main>
 
       {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(selectedCard.id)} priceHistory={{}} onToggleManual={()=>{}} onToggleFavorite={()=>{}} onRecordPrice={()=>{}} onClose={()=>setSelectedCard(null)} readOnly/>}
@@ -1340,7 +1325,6 @@ function App(){
         {search&&!visibleArtists.some(entry=>{const cards=visibleCardData[toSlug(entry.name)]||[];const q=search.toLowerCase();return cards.some(c=>(c.name||"").toLowerCase().includes(q));})&&(
           <div style={{textAlign:"center",padding:"3rem 1rem",color:"#6b6b90",fontSize:".875rem"}}>No cards matching "{search}"</div>
         )}
-        <div style={{marginTop:"3rem",paddingTop:"1rem",borderTop:"1px solid #1e1e35",fontSize:".62rem",color:"#2a2a3a",textAlign:"center",letterSpacing:".1em"}}>Komiya · Morii · Kanda · Nishida</div>
       </main>
 
       {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(selectedCard.id)} priceHistory={priceHistory} onToggleManual={handleToggleManual} onToggleFavorite={handleToggleFavorite} onRecordPrice={handleRecordPrice} onClose={()=>setSelectedCard(null)} intentStatus={intentMap.get(selectedCard.id)} onSetIntent={handleSetIntent} onClearIntent={handleClearIntent}/>}
