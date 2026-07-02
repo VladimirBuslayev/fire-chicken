@@ -193,6 +193,7 @@ function Dashboard({cardData,checkOwned,favorites,user,onGoBinder,onUploadCSV,cs
             <button onClick={onUploadCSV} className="btn-ghost" style={{display:"flex",alignItems:"center",gap:".3rem",color:"#8b6cd8",borderRadius:8,padding:".35rem .6rem",fontSize:".72rem",fontWeight:600}}>
               <IcoUpload/> CSV
             </button>
+            <button onClick={()=>onGoBinder("hunt")} className="btn-ghost" style={{color:"#9b7fe8",borderRadius:8,padding:".35rem .6rem",fontSize:".72rem",fontWeight:600,whiteSpace:"nowrap"}}>Hunt Board</button>
             <button onClick={()=>onGoBinder("binder")} className="btn-flame" style={{borderRadius:8,padding:".35rem .75rem",fontSize:".72rem",fontWeight:700,letterSpacing:".03em"}}>
               Open Binder →
             </button>
@@ -1072,6 +1073,103 @@ function SharedBinder({token}){
   );
 }
 
+
+// ── HUNT BOARD ────────────────────────────────────────────────────────────────
+const HUNT_SECTIONS=[
+  {key:"hunting",label:"ACTIVE TARGETS",clr:"#b9a3f2",line:"rgba(155,127,232,0.25)"},
+  {key:"want",   label:"ON THE LIST",   clr:"#8888b8",line:"rgba(136,136,184,0.18)"},
+  {key:"maybe",  label:"MAYBE LATER",   clr:"#5a5a82",line:"rgba(90,90,130,0.18)"},
+];
+function HuntStatusDot({status}){
+  const st={width:8,height:8,borderRadius:"50%",flexShrink:0};
+  if(status==="hunting")return<div style={{...st,background:"#9b7fe8"}}/>;
+  if(status==="want")return<div style={{...st,background:"transparent",border:"1.5px solid #9b7fe8"}}/>;
+  return<div style={{...st,background:"transparent",border:"1.5px solid #4a4a70"}}/>;
+}
+function HuntBoard({visibleCardData,intentMap,checkOwned,onCardClick,onBack}){
+  const groups=useMemo(()=>{
+    const out={hunting:[],want:[],maybe:[]};
+    if(!intentMap||!intentMap.size)return out;
+    const seen=new Set();
+    ARTISTS.forEach(entry=>{
+      const slug=toSlug(entry.name);
+      const bucket={hunting:[],want:[],maybe:[]};
+      (visibleCardData[slug]||[]).forEach(card=>{
+        const st=intentMap.get(card.id);
+        if(!st||!bucket[st])return;           // no intent, or ignore -> off the board
+        if(seen.has(card.id))return;          // defensive dedupe across slugs
+        if(checkOwned(card))return;           // owned suppression (stale intent rows stay in DB)
+        seen.add(card.id);
+        bucket[st].push(card);
+      });
+      HUNT_SECTIONS.forEach(({key})=>{
+        if(!bucket[key].length)return;
+        bucket[key].sort((a,b)=>{
+          const pa=getBestPrice(a),pb=getBestPrice(b);
+          const va=pa&&pa.amount!=null?pa.amount:-1,vb=pb&&pb.amount!=null?pb.amount:-1;
+          return vb-va;                        // price desc, unpriced last
+        });
+        out[key].push({artist:entry.name,cards:bucket[key]});
+      });
+    });
+    return out;
+  },[visibleCardData,intentMap,checkOwned]);
+  const total=HUNT_SECTIONS.reduce((s,{key})=>s+groups[key].reduce((n,g)=>n+g.cards.length,0),0);
+  return(
+    <div style={{minHeight:"100dvh",background:"#07070f"}}>
+      <header style={{position:"sticky",top:0,zIndex:100,background:"rgba(7,7,15,0.97)",backdropFilter:"blur(18px)",WebkitBackdropFilter:"blur(18px)",borderBottom:"1px solid #1e1e35"}}>
+        <div style={{maxWidth:860,margin:"0 auto",padding:".7rem 1rem",display:"flex",alignItems:"center",gap:".8rem"}}>
+          <button onClick={onBack} className="btn-ghost" style={{color:"#6b6b90",borderRadius:8,padding:".35rem .55rem",fontSize:".74rem",display:"flex",alignItems:"center",gap:".3rem",whiteSpace:"nowrap"}}>← Dashboard</button>
+          <span className="font-display" style={{fontWeight:600,fontSize:"1.02rem",color:"#e8e8f4",letterSpacing:"-.01em"}}>Hunt Board</span>
+          <span style={{marginLeft:"auto",fontSize:".7rem",color:"#6b6b90",fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}}>{total} {total===1?"target":"targets"}</span>
+        </div>
+      </header>
+      <main style={{maxWidth:860,margin:"0 auto",padding:"1.2rem 1rem 3rem"}}>
+        {total===0&&(
+          <div style={{padding:"3rem 1.2rem",textAlign:"center",fontSize:".8rem",lineHeight:1.6,color:"#4a4a70",border:"1px dashed #1e1e35",borderRadius:12,marginTop:"1.5rem"}}>
+            Your Hunt Board is empty. Open any missing card and set a Hunt status to start planning your next finds.
+          </div>
+        )}
+        {HUNT_SECTIONS.map(sec=>{
+          const artistGroups=groups[sec.key];
+          if(!artistGroups.length)return null;
+          const count=artistGroups.reduce((n,g)=>n+g.cards.length,0);
+          return(
+            <section key={sec.key} style={{marginBottom:"2.2rem"}}>
+              <div style={{display:"flex",alignItems:"center",gap:".6rem",marginBottom:".9rem"}}>
+                <span style={{fontSize:".64rem",fontWeight:800,letterSpacing:".14em",color:sec.clr,whiteSpace:"nowrap"}}>{sec.label} · {count}</span>
+                <div style={{flex:1,height:1,background:sec.line}}/>
+              </div>
+              {artistGroups.map(g=>(
+                <div key={g.artist} style={{marginBottom:"1.1rem"}}>
+                  <div style={{fontSize:".66rem",fontWeight:700,letterSpacing:".08em",color:"#8b8bb0",marginBottom:".35rem",paddingLeft:".1rem"}}>{g.artist} · {g.cards.length}</div>
+                  <div style={{display:"flex",flexDirection:"column"}}>
+                    {g.cards.map(card=>{
+                      const price=getBestPrice(card);
+                      const sm=imgSmall(card);
+                      return(
+                        <div key={card.id} className="wanted-row" onClick={()=>onCardClick(card)} style={{display:"flex",alignItems:"center",gap:".7rem",padding:".5rem .6rem",cursor:"pointer",borderRadius:10}}>
+                          {sm&&<img src={sm} alt={card.name} style={{width:38,height:"auto",borderRadius:4,flexShrink:0}}/>}
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{fontSize:".82rem",fontWeight:700,color:"#e8e8f4",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{card.name}</div>
+                            <div style={{fontSize:".64rem",color:"#6b6b90",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{g.artist} · {(card.set&&card.set.name)||"—"}{card.localId?` · #${card.localId}`:""}{card.rarity?` · ${card.rarity}`:""}</div>
+                          </div>
+                          <HuntStatusDot status={sec.key}/>
+                          <div style={{fontSize:".78rem",fontWeight:700,color:price&&price.amount!=null?"#e8e8f4":"#3a3a5a",fontVariantNumeric:"tabular-nums",minWidth:58,textAlign:"right",flexShrink:0}}>{price&&price.amount!=null?fmtPrice(price.amount,price.currency):""}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </section>
+          );
+        })}
+      </main>
+    </div>
+  );
+}
+
 function App(){
   const[view,          setView]         =useState("checking-auth");
   const[artistSlug,    setArtistSlug]   =useState(null);
@@ -1254,6 +1352,11 @@ function App(){
     </>);
   }
 
+  if(view==="hunt")return(<>
+    <HuntBoard visibleCardData={visibleCardData} intentMap={intentMap} checkOwned={checkOwned} onCardClick={setSelectedCard} onBack={()=>setView("dashboard")}/>
+    {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(selectedCard.id)} priceHistory={priceHistory} onToggleManual={handleToggleManual} onToggleFavorite={handleToggleFavorite} onRecordPrice={handleRecordPrice} onClose={()=>setSelectedCard(null)} intentStatus={intentMap.get(selectedCard.id)} onSetIntent={handleSetIntent} onClearIntent={handleClearIntent}/>}
+  </>);
+
   const visibleArtists=filterSlug==="all"?ARTISTS:ARTISTS.filter(a=>toSlug(a.name)===filterSlug);
   const totalCards=Object.values(visibleCardData).reduce((s,a)=>s+a.length,0);
   const totalOwned=Object.values(visibleCardData).reduce((s,cards)=>s+cards.filter(checkOwned).length,0);
@@ -1279,7 +1382,7 @@ function App(){
             <div style={{display:"flex",gap:".4rem",alignItems:"center"}}>
               {csvStatus==="loading"&&<span style={{fontSize:".7rem",color:"#6b6b90",display:"flex",alignItems:"center",gap:4}}><IcoSpin/>Reading…</span>}
               {csvStatus?.count&&<span style={{fontSize:".7rem",color:"#22c55e"}}>✓ {csvStatus.count}</span>}
-              
+              <button onClick={()=>setView("hunt")} className="btn-ghost" style={{color:"#9b7fe8",borderRadius:8,padding:".35rem .6rem",fontSize:".7rem",fontWeight:600,whiteSpace:"nowrap"}}>Hunt Board</button>
               <button onClick={toggleShowAllColor} className="btn-ghost" title={showAllColor?"Showing missing cards in color":"Showing missing cards grayed out"} style={{color:showAllColor?"#c0589e":"#6b6b90",borderRadius:8,padding:".38rem",display:"flex",background:showAllColor?"rgba(192,88,158,0.12)":undefined,border:showAllColor?"1px solid rgba(192,88,158,0.3)":undefined}}><IcoContrast/></button>
               <button onClick={()=>setShowSettings(true)} className="btn-ghost" style={{color:"#6b6b90",borderRadius:8,padding:".38rem",display:"flex"}}><IcoGear/></button>
               <input ref={fileRef} type="file" accept=".csv" onChange={e=>{const f=e.target.files&&e.target.files[0];if(f)handleCSV(f);e.target.value="";}} style={{display:"none"}}/>
